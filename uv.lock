@@ -37,11 +37,15 @@ name = "jzr-tools"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "click" },
     { name = "typer" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "typer", specifier = ">=0.12,<1.0" }]
+requires-dist = [
+    { name = "click", specifier = ">=8.1,<9.0" },
+    { name = "typer", specifier = ">=0.12,<1.0" },
+]
 
 [[package]]
 name = "markdown-it-py"

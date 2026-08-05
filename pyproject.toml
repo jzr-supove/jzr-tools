@@ -9,6 +9,8 @@ description = "Personal cross-platform CLI toolkit."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  # click is used directly for the dynamic `<from>2<to>` convert subcommands.
+  "click>=8.1,<9.0",
   "typer>=0.12,<1.0",
 ]
 

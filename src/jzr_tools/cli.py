@@ -5,6 +5,7 @@ from typing import Annotated
 import typer
 
 from jzr_tools import __version__
+from jzr_tools.commands.convert import app as convert_app
 from jzr_tools.commands.fs import app as fs_app
 from jzr_tools.commands.system import app as system_app
 from jzr_tools.commands.text import app as text_app
@@ -46,6 +47,7 @@ def version() -> None:
 app.add_typer(text_app, name="text")
 app.add_typer(fs_app, name="fs")
 app.add_typer(system_app, name="system")
+app.add_typer(convert_app, name="convert")
 
 
 def main() -> None:
