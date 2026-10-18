@@ -36,7 +36,10 @@ python -m jzr_tools --help
 ## Included v1 Commands
 
 - `jzr version`: print the installed toolkit version
+- `jzr killport 3000`: force-kill processes using local port 3000
+- `jzr png2jpg test_name`: convert `test_name.png` into `test_name.jpg`
 - `jzr text slug "Some Text"`: convert text into a slug
+- `jzr text kebab "ApiSix deployment Notes" --date -c`: convert text into lowercase kebab-case, optionally prefix it with today's ISO date, and optionally copy it to the clipboard
 - `jzr fs ls [PATH]`: list directory entries
 - `jzr system which COMMAND`: resolve an executable on `PATH`
 - `jzr convert ...`: convert images (see below)
@@ -87,3 +90,92 @@ Behavior worth knowing:
 
 `jzr convert formats` lists the supported extensions and which backends were
 found on `PATH`.
+
+## Kill a Port
+
+```bash
+jzr killport 3000
+```
+
+Force-kills all visible processes bound to the exact local port, for TCP and UDP
+over IPv4 and IPv6. Works on Windows, Linux, and macOS using `psutil`, installed
+with the toolkit. On Unix this sends SIGKILL; on Windows it uses TerminateProcess.
+Remote connections to the port are not targeted, and unrelated child processes
+are not killed. There is no confirmation prompt.
+
+Ports must be between 1 and 65535. The command prints each killed PID and returns
+success if no process or Windows port exclusion is found. Permission errors or processes that do not exit
+produce a nonzero exit code, while other matching processes are still attempted.
+Processes that restart automatically may reclaim the port.
+
+Use an Administrator terminal on Windows or `sudo jzr killport 3000` on Unix
+when permissions prevent inspection or termination. macOS requires root for
+system-wide socket inspection; Linux may omit sockets without sufficient
+permissions (see the [psutil documentation](https://psutil.readthedocs.io/stable/#psutil.net_connections)).
+
+### Windows excluded ports (EACCES)
+
+Windows can reserve a port even when no process is listening. `jzr killport`
+checks active TCP/UDP exclusion ranges for IPv4 and IPv6, prints matching ranges,
+and returns a nonzero exit code when the port is excluded. This explains cases
+such as Next.js reporting `listen EACCES: permission denied 0.0.0.0:3000` while
+no port owner is visible.
+
+Choose an unreserved port, or try your HNS recovery workflow from an
+**Administrator terminal**:
+
+```powershell
+jzr killport 3000 --restart-hns
+```
+
+The flag stops and starts the Host Network Service only when an exclusion is
+detected. This can interrupt Docker, containers, and WSL networking. The command
+rechecks all exclusion ranges and tests local binds afterward; it fails if the
+port is still unavailable. A restart is not guaranteed to clear a reservation,
+and Windows may reserve the port again later. Administered exclusions (`*`) are
+reported without restarting HNS. The command does not delete reservations or
+change dynamic port ranges. Linux and macOS reject `--restart-hns`.
+
+## Text Kebab Shortcut
+
+Convert text into lowercase kebab-case:
+
+```bash
+jzr text kebab "ApiSix deployment Notes"
+```
+
+Prefix the result with today's ISO date:
+
+```bash
+jzr text kebab "ApiSix deployment Notes" --date
+```
+
+Copy the result to the system clipboard:
+
+```bash
+jzr text kebab "ApiSix deployment Notes" -c
+```
+
+Omit the text argument to paste or pipe multiline content. Runs of spaces,
+newlines, and punctuation collapse into a single dash.
+
+## ImageMagick Shortcut
+
+If ImageMagick is installed and `magick` is available on `PATH`, you can convert a
+PNG without repeating the basename:
+
+```bash
+jzr png2jpg test_name
+```
+
+This runs the equivalent of:
+
+```bash
+magick test_name.png -quality 92 test_name.jpg
+```
+
+You can also pass an explicit PNG path or override the quality:
+
+```bash
+jzr png2jpg path/to/test_name.png --quality 85
+```

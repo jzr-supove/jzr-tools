@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import base64
+from datetime import date
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 from typer.testing import CliRunner
 
@@ -23,7 +25,7 @@ from jzr_tools.core.images import (
     target_for,
 )
 from jzr_tools.core.system import resolve_executable
-from jzr_tools.core.text import slugify
+from jzr_tools.core.text import kebab_case, slugify
 
 runner = CliRunner()
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -35,11 +37,22 @@ ONE_PIXEL_PNG = base64.b64decode(
 )
 
 
+def combined_output(result: object) -> str:
+    """Return stdout and stderr regardless of Click runner configuration."""
+    stdout = getattr(result, "stdout", "")
+    try:
+        stderr = result.stderr
+    except (AttributeError, ValueError):
+        stderr = ""
+    return f"{stdout}{stderr}"
+
+
 class CliTests(unittest.TestCase):
     def test_root_help_lists_registered_groups(self) -> None:
         result = runner.invoke(app, ["--help"])
 
         self.assertEqual(result.exit_code, 0)
+        self.assertIn("png2jpg", result.stdout)
         self.assertIn("text", result.stdout)
         self.assertIn("fs", result.stdout)
         self.assertIn("system", result.stdout)
@@ -57,6 +70,48 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(result.stdout.strip(), "hello-world")
         self.assertEqual(slugify("Hello, World!"), "hello-world")
+
+    def test_kebab_command_uses_lowercase_kebab_case(self) -> None:
+        result = runner.invoke(app, ["text", "kebab", "ApiSix deployment Notes"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.stdout.strip(), "apisix-deployment-notes")
+        self.assertEqual(
+            kebab_case("ApiSix deployment Notes"),
+            "apisix-deployment-notes",
+        )
+
+    def test_kebab_command_can_prefix_iso_date(self) -> None:
+        with mock.patch("jzr_tools.commands.text.date") as date_mock:
+            date_mock.today.return_value = date(2026, 7, 11)
+
+            result = runner.invoke(
+                app,
+                ["text", "kebab", "ApiSix deployment Notes", "--date"],
+            )
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.stdout.strip(), "2026-07-11_apisix-deployment-notes")
+
+    def test_kebab_command_reads_multiline_stdin_when_text_is_omitted(self) -> None:
+        text = "ApiSix deployment\n\nNotes"
+
+        result = runner.invoke(app, ["text", "kebab"], input=text)
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.stdout.strip(), "apisix-deployment-notes")
+        self.assertEqual(kebab_case(text), "apisix-deployment-notes")
+
+    def test_kebab_command_can_copy_result_to_clipboard(self) -> None:
+        with mock.patch("jzr_tools.commands.text.copy_to_clipboard") as copy_mock:
+            result = runner.invoke(
+                app,
+                ["text", "kebab", "ApiSix deployment Notes", "-c"],
+            )
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.stdout.strip(), "apisix-deployment-notes")
+        copy_mock.assert_called_once_with("apisix-deployment-notes")
 
     def test_fs_ls_lists_entries(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -76,6 +131,78 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertTrue(Path(result.stdout.strip()).exists())
         self.assertEqual(resolve_executable(sys.executable), result.stdout.strip())
+
+    def test_png2jpg_command_converts_stem_with_default_quality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stem = Path(tmpdir) / "test_name"
+            png_path = stem.with_suffix(".png")
+            png_path.write_bytes(b"png")
+
+            with (
+                mock.patch("jzr_tools.core.image.resolve_executable", return_value="magick"),
+                mock.patch("jzr_tools.core.image.subprocess.run") as run_mock,
+            ):
+                result = runner.invoke(app, ["png2jpg", str(stem)])
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(result.stdout.strip(), str(stem.with_suffix(".jpg")))
+            run_mock.assert_called_once_with(
+                ["magick", str(png_path), "-quality", "92", str(stem.with_suffix(".jpg"))],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+    def test_png2jpg_command_accepts_png_path_and_custom_quality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            png_path = Path(tmpdir) / "test_name.png"
+            png_path.write_bytes(b"png")
+
+            with (
+                mock.patch("jzr_tools.core.image.resolve_executable", return_value="magick"),
+                mock.patch("jzr_tools.core.image.subprocess.run") as run_mock,
+            ):
+                result = runner.invoke(app, ["png2jpg", str(png_path), "--quality", "80"])
+
+            self.assertEqual(result.exit_code, 0)
+            run_mock.assert_called_once_with(
+                [
+                    "magick",
+                    str(png_path),
+                    "-quality",
+                    "80",
+                    str(png_path.with_suffix(".jpg")),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+    def test_png2jpg_command_fails_when_png_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stem = Path(tmpdir) / "missing"
+
+            result = runner.invoke(app, ["png2jpg", str(stem)])
+
+            self.assertEqual(result.exit_code, 1)
+            self.assertIn(
+                f"PNG file not found: {stem.with_suffix('.png')}",
+                combined_output(result),
+            )
+
+    def test_png2jpg_command_fails_when_magick_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stem = Path(tmpdir) / "test_name"
+            stem.with_suffix(".png").write_bytes(b"png")
+
+            with mock.patch("jzr_tools.core.image.resolve_executable", return_value=None):
+                result = runner.invoke(app, ["png2jpg", str(stem)])
+
+            self.assertEqual(result.exit_code, 1)
+            self.assertIn(
+                "ImageMagick command 'magick' was not found on PATH.",
+                combined_output(result),
+            )
 
     def test_module_entrypoint_runs(self) -> None:
         env = os.environ.copy()
