@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+from typing import Sequence
 
 SUPPORTED_EXTENSIONS = frozenset(
     {
@@ -46,6 +47,15 @@ _EXTENSION_ALIASES = (
 )
 
 BACKEND_PREFERENCE = ("magick", "ffmpeg")
+
+# Formats a backend has no encoder or muxer for, so it fails on every file.
+_UNWRITABLE_EXTENSIONS = {"ffmpeg": frozenset({"heic", "heif"})}
+
+# Sources ffmpeg opens with its image2 demuxer, which reads `%` in a path as a
+# numbered-sequence pattern unless told otherwise.
+_FFMPEG_IMAGE2_EXTENSIONS = frozenset(
+    {"bmp", "jpeg", "jpg", "png", "ppm", "tga", "tif", "tiff", "webp"}
+)
 
 
 class BackendUnavailableError(RuntimeError):
@@ -104,6 +114,17 @@ def resolve_backend(preference: str = "auto") -> tuple[str, list[str]]:
     )
 
 
+def unsupported_target(backend: str, target_extension: str) -> str | None:
+    """Explain why ``backend`` cannot write this format, or return ``None``."""
+    extension = normalize_extension(target_extension)
+    if extension not in _UNWRITABLE_EXTENSIONS.get(backend, frozenset()):
+        return None
+    return (
+        f"{backend} cannot write .{extension} files. "
+        "Use ImageMagick (--backend magick) or choose another format."
+    )
+
+
 def quality_caveat(backend: str, target_extension: str) -> str | None:
     """Explain how ``--quality`` behaves for this target, if it is surprising.
 
@@ -154,12 +175,22 @@ def build_command(
 ) -> list[str]:
     """Build the argv used to convert ``source`` into ``target``."""
     target_extension = normalize_extension(target.suffix)
+    single_frame = target_extension not in ANIMATED_EXTENSIONS
 
     if backend == "magick":
-        command = [*executable, str(source)]
+        source_argument = str(source)
+        if single_frame:
+            # Without a frame selector a multi-frame source (GIF, ICO, TIFF)
+            # is written as `name-0.ext`, `name-1.ext`, ... instead of the
+            # target. A path carrying a selector has its `%` escapes expanded,
+            # so literal percent signs must be doubled.
+            source_argument = source_argument.replace("%", "%%") + "[0]"
+        command = [*executable, source_argument]
         if quality is not None:
             command += ["-quality", str(quality)]
-        command.append(str(target))
+        # Output names always have `%` escapes expanded (`%d` is the frame
+        # number), so a literal percent sign is doubled here too.
+        command.append(str(target).replace("%", "%%"))
         return command
 
     if backend == "ffmpeg":
@@ -169,12 +200,20 @@ def build_command(
             "-loglevel",
             "error",
             "-y" if overwrite else "-n",
-            "-i",
-            str(source),
         ]
+        if (
+            "%" in str(source)
+            and normalize_extension(source.suffix) in _FFMPEG_IMAGE2_EXTENSIONS
+        ):
+            command += ["-pattern_type", "none"]
+        command += ["-i", str(source)]
         command += _ffmpeg_quality_args(target_extension, quality)
-        if target_extension not in ANIMATED_EXTENSIONS:
+        if single_frame:
+            # `-update 1` also makes the image2 muxer take the name literally.
             command += ["-frames:v", "1", "-update", "1"]
+        elif target_extension == "webp" and "%" in str(target):
+            # A `%d`-style name would otherwise select the image-sequence muxer.
+            command += ["-f", "webp"]
         command.append(str(target))
         return command
 
@@ -202,11 +241,58 @@ def target_for(source: Path, target_extension: str, *, outdir: Path | None = Non
     return parent / f"{source.stem}.{normalize_extension(target_extension)}"
 
 
+def _path_key(path: Path) -> str:
+    """Return a comparison key that treats paths differing only by case as equal."""
+    return str(path.resolve()).casefold()
+
+
+def plan_targets(
+    sources: Sequence[Path],
+    target_extension: str,
+    *,
+    outdir: Path | None = None,
+    root: Path | None = None,
+) -> list[Path]:
+    """Return one distinct output path per source, in order.
+
+    With both ``outdir`` and ``root``, each source's directory relative to
+    ``root`` is recreated under ``outdir``. Sources that would still share an
+    output (``x.png`` and ``x.webp``) get ``-2``, ``-3``, ... appended to the
+    stem, so no file in a run is written twice.
+    """
+    claimed: set[str] = set()
+    targets: list[Path] = []
+    for source in sources:
+        directory = outdir
+        if outdir is not None and root is not None:
+            try:
+                directory = outdir / source.parent.relative_to(root)
+            except ValueError:
+                directory = outdir
+
+        target = target_for(source, target_extension, outdir=directory)
+        if _path_key(target) == _path_key(source):
+            # Converting a file onto itself is skipped later; it must not push
+            # another source onto a suffixed name.
+            targets.append(target)
+            continue
+
+        candidate = target
+        counter = 2
+        while _path_key(candidate) in claimed:
+            candidate = target.with_name(f"{target.stem}-{counter}{target.suffix}")
+            counter += 1
+        claimed.add(_path_key(candidate))
+        targets.append(candidate)
+
+    return targets
+
+
 def find_sources(
     directory: Path,
     *,
     extensions: set[str] | frozenset[str] | None = None,
-    pattern: str | None = None,
+    pattern: str | re.Pattern[str] | None = None,
     recursive: bool = False,
 ) -> list[Path]:
     """Collect candidate files under ``directory``.
@@ -274,6 +360,15 @@ def convert_file(
             command,
             "failed",
             detail[-1] if detail else f"{backend} exited with {completed.returncode}",
+        )
+
+    if not target.exists():
+        return ConversionResult(
+            source,
+            target,
+            command,
+            "failed",
+            f"{backend} reported success but did not write {target.name}",
         )
 
     return ConversionResult(source, target, command, "converted")

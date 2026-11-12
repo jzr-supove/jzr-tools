@@ -30,9 +30,10 @@ from jzr_tools.core.images import (
     equivalent_extensions,
     find_sources,
     normalize_extension,
+    plan_targets,
     quality_caveat,
     resolve_backend,
-    target_for,
+    unsupported_target,
 )
 
 _PAIR_PATTERN = re.compile(r"^([a-z0-9]+)2([a-z0-9]+)$")
@@ -84,6 +85,19 @@ def _report(result: ConversionResult) -> None:
         typer.echo(f"fail {result.source}: {result.detail}", err=True)
 
 
+def _compile_pattern(pattern: str | None) -> re.Pattern[str] | None:
+    """Compile ``--pattern``, turning a bad regex into a usage error."""
+    if pattern is None:
+        return None
+    try:
+        return re.compile(pattern)
+    except re.error as error:
+        raise click.BadParameter(
+            f"{pattern!r} is not a valid regular expression ({error}).",
+            param_hint="'--pattern'",
+        ) from error
+
+
 def _run(
     sources: Sequence[Path],
     target_extension: str,
@@ -91,10 +105,15 @@ def _run(
     quality: int | None,
     backend: str,
     outdir: Path | None,
+    root: Path | None,
     overwrite: bool,
     dry_run: bool,
 ) -> None:
-    """Convert every source, reporting per file and summarizing at the end."""
+    """Convert every source, reporting per file and summarizing at the end.
+
+    ``root`` is the scanned directory when sources were discovered rather than
+    listed, so ``--outdir`` can mirror its subdirectories.
+    """
     if not sources:
         typer.echo("No matching files.", err=True)
         raise typer.Exit(code=1)
@@ -105,16 +124,23 @@ def _run(
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1) from error
 
+    unsupported = unsupported_target(backend_name, target_extension)
+    if unsupported is not None:
+        typer.echo(unsupported, err=True)
+        raise typer.Exit(code=1)
+
     if quality is not None:
         caveat = quality_caveat(backend_name, target_extension)
         if caveat is not None:
             typer.echo(f"note: {caveat}", err=True)
 
+    targets = plan_targets(sources, target_extension, outdir=outdir, root=root)
+
     counts: Counter[str] = Counter()
-    for source in sources:
+    for source, target in zip(sources, targets):
         result = convert_file(
             source,
-            target_for(source, target_extension, outdir=outdir),
+            target,
             backend=backend_name,
             executable=executable,
             quality=quality,
@@ -203,16 +229,16 @@ def _build_pair_command(name: str, source_extension: str, target_extension: str)
         overwrite: bool,
         dry_run: bool,
     ) -> None:
+        regex = _compile_pattern(pattern)
         if sources:
             selected = list(sources)
-            if pattern is not None:
-                regex = re.compile(pattern)
+            if regex is not None:
                 selected = [path for path in selected if regex.search(path.name) is not None]
         else:
             selected = find_sources(
                 directory,
                 extensions=equivalent_extensions(source_extension),
-                pattern=pattern,
+                pattern=regex,
                 recursive=recursive,
             )
 
@@ -222,6 +248,7 @@ def _build_pair_command(name: str, source_extension: str, target_extension: str)
             quality=quality,
             backend=backend,
             outdir=outdir,
+            root=None if sources else directory,
             overwrite=overwrite,
             dry_run=dry_run,
         )
@@ -299,13 +326,14 @@ def convert(
         )
         raise typer.Exit(code=2)
 
+    regex = _compile_pattern(pattern)
     skip = equivalent_extensions(target_extension)
     sources = [
         path
         for path in find_sources(
             directory,
             extensions=SUPPORTED_EXTENSIONS,
-            pattern=pattern,
+            pattern=regex,
             recursive=recursive,
         )
         if normalize_extension(path.suffix) not in skip
@@ -317,6 +345,7 @@ def convert(
         quality=quality,
         backend=backend,
         outdir=outdir,
+        root=directory,
         overwrite=overwrite,
         dry_run=dry_run,
     )
@@ -330,4 +359,12 @@ def formats() -> None:
     available = detect_backends()
     for name in ("magick", "ffmpeg"):
         location = available.get(name)
-        typer.echo(f"{name}: {location[0] if location else 'not found'}")
+        line = f"{name}: {location[0] if location else 'not found'}"
+        unwritable = sorted(
+            extension
+            for extension in SUPPORTED_EXTENSIONS
+            if unsupported_target(name, extension) is not None
+        )
+        if unwritable:
+            line += f" (cannot write: {' '.join(unwritable)})"
+        typer.echo(line)

@@ -17,7 +17,7 @@ For development with `uv`:
 ```bash
 uv sync
 uv run jzr --help
-python -m unittest discover -s tests
+uv run python -m unittest discover -s tests
 ```
 
 You can also run the package directly:
@@ -75,8 +75,16 @@ Shared options: `-q/--quality` (1-100), `-d/--dir`, `-p/--pattern`,
 
 Behavior worth knowing:
 
-- Outputs land beside their source unless `--outdir` is given.
+- Outputs land beside their source unless `--outdir` is given. When a
+  directory is scanned with `--recursive`, its subdirectories are recreated
+  under `--outdir`; explicitly listed sources are written flat.
+- No output is written twice in one run. Sources that would share a name
+  (`logo.png` and `logo.webp` both becoming `logo.jpg`) get `-2`, `-3`, ...
+  appended, in sorted source order.
 - Existing outputs are skipped unless `--overwrite` is passed.
+- Only the first frame of a multi-frame source (animated GIF, multi-size ICO)
+  is used unless the target is itself animated (`gif`, `webp`, `avif`).
+- ffmpeg cannot write `heic`/`heif`; those targets need ImageMagick.
 - A failed file does not stop the batch; the run exits `1` and reports which
   files failed.
 - `--dry-run` prints the exact backend command for each file.
@@ -158,6 +166,12 @@ jzr text kebab "ApiSix deployment Notes" -c
 
 Omit the text argument to paste or pipe multiline content. Runs of spaces,
 newlines, and punctuation collapse into a single dash.
+
+`text slug` and `text kebab` produce ASCII. Accented Latin letters lose their
+accents, Russian and Uzbek Cyrillic are transliterated (`Привет мир` becomes
+`privet-mir`), and letters such as `ß` and `ø` are spelled out. Other scripts
+are dropped; if nothing is left, the command exits `1` instead of printing an
+empty result.
 
 ## ImageMagick Shortcut
 

@@ -190,6 +190,54 @@ class CliTests(unittest.TestCase):
                 combined_output(result),
             )
 
+    def test_png2jpg_command_accepts_dotted_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            png_path = Path(tmpdir) / "shot.v2.png"
+            jpg_path = Path(tmpdir) / "shot.v2.jpg"
+            png_path.write_bytes(b"png")
+
+            with (
+                mock.patch("jzr_tools.core.image.resolve_executable", return_value="magick"),
+                mock.patch("jzr_tools.core.image.subprocess.run") as run_mock,
+            ):
+                result = runner.invoke(app, ["png2jpg", str(Path(tmpdir) / "shot.v2")])
+
+            self.assertEqual(result.exit_code, 0, combined_output(result))
+            self.assertEqual(result.stdout.strip(), str(jpg_path))
+            run_mock.assert_called_once_with(
+                ["magick", str(png_path), "-quality", "92", str(jpg_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+    def test_png2jpg_command_reports_missing_png_for_dotted_basename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stem = Path(tmpdir) / "shot.v2"
+
+            result = runner.invoke(app, ["png2jpg", str(stem)])
+
+            self.assertEqual(result.exit_code, 1)
+            self.assertIn(
+                f"PNG file not found: {Path(tmpdir) / 'shot.v2.png'}",
+                combined_output(result),
+            )
+
+    def test_png2jpg_command_still_rejects_existing_non_png_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            photo = Path(tmpdir) / "photo.jpg"
+            photo.write_bytes(b"jpg")
+
+            with mock.patch("jzr_tools.core.image.subprocess.run") as run_mock:
+                result = runner.invoke(app, ["png2jpg", str(photo)])
+
+            self.assertEqual(result.exit_code, 1)
+            self.assertIn(
+                "Expected a PNG file path or a basename without an extension.",
+                combined_output(result),
+            )
+            run_mock.assert_not_called()
+
     def test_png2jpg_command_fails_when_magick_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             stem = Path(tmpdir) / "test_name"
@@ -233,7 +281,7 @@ class ImageCoreTests(unittest.TestCase):
 
         self.assertEqual(
             command,
-            ["/usr/bin/magick", "shot.png", "-quality", "90", "shot.jpg"],
+            ["/usr/bin/magick", "shot.png[0]", "-quality", "90", "shot.jpg"],
         )
 
     def test_ffmpeg_command_maps_quality_onto_inverted_scale(self) -> None:

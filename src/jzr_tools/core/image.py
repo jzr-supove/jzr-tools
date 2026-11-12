@@ -11,14 +11,16 @@ from jzr_tools.core.system import resolve_executable
 def convert_png_to_jpg(source: Path | str, *, quality: int = 92) -> Path:
     """Convert a PNG into a JPG using ImageMagick."""
     source_path = Path(source)
-    if source_path.suffix:
-        if source_path.suffix.lower() != ".png":
-            raise ValueError("Expected a PNG file path or a basename without an extension.")
+    if source_path.suffix.lower() == ".png":
         png_path = source_path
         jpg_path = source_path.with_suffix(".jpg")
     else:
-        png_path = source_path.with_suffix(".png")
-        jpg_path = source_path.with_suffix(".jpg")
+        # Anything else is a basename. Appending keeps dotted names such as
+        # `shot.v2` intact, where `with_suffix` would replace the `.v2`.
+        png_path = source_path.with_name(f"{source_path.name}.png")
+        jpg_path = source_path.with_name(f"{source_path.name}.jpg")
+        if not png_path.is_file() and source_path.suffix and source_path.is_file():
+            raise ValueError("Expected a PNG file path or a basename without an extension.")
 
     if not png_path.is_file():
         raise FileNotFoundError(f"PNG file not found: {png_path}")

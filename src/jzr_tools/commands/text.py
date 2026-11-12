@@ -28,7 +28,16 @@ def slug(
     ] = False,
 ) -> None:
     """Convert text into a URL-safe slug."""
-    typer.echo(slugify(text, separator=separator, lowercase=not preserve_case))
+    result = slugify(text, separator=separator, lowercase=not preserve_case)
+    if not result:
+        _fail_empty()
+
+    typer.echo(result)
+
+
+def _fail_empty() -> None:
+    typer.echo("Nothing to convert: the text has no letters or digits.", err=True)
+    raise typer.Exit(code=1)
 
 
 def _read_text(text: str | None) -> str:
@@ -69,6 +78,10 @@ def kebab(
 ) -> None:
     """Convert text into lowercase kebab-case."""
     source_text = _read_text(text)
+    if not kebab_case(source_text):
+        # Checked before the date is added, so the output is never a bare prefix.
+        _fail_empty()
+
     date_prefix = date.today() if include_date else None
     result = kebab_case(source_text, date_prefix=date_prefix)
 
