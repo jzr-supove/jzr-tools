@@ -6,7 +6,7 @@ from datetime import date
 import unittest
 from unittest import mock
 
-from typer.testing import CliRunner
+from click.testing import CliRunner
 
 from jzr_tools.cli import app
 from jzr_tools.core.text import kebab_case, slugify

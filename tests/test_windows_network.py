@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from unittest import mock
 
-from typer.testing import CliRunner
+from click.testing import CliRunner
 
 from jzr_tools.cli import app
 from jzr_tools.core.network import KillPortResult

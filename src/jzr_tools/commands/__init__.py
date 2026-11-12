@@ -1,1 +1,1 @@
-"""CLI command modules for jzr_tools."""
+"""CLI command modules for jzr-tools."""

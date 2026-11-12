@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from datetime import date
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -12,10 +13,9 @@ import tempfile
 import unittest
 from unittest import mock
 
-from typer.testing import CliRunner
+from click.testing import CliRunner
 
 from jzr_tools.cli import app
-from jzr_tools.core.filesystem import list_entries
 from jzr_tools.core.images import (
     build_command,
     detect_backends,
@@ -24,7 +24,6 @@ from jzr_tools.core.images import (
     quality_caveat,
     target_for,
 )
-from jzr_tools.core.system import resolve_executable
 from jzr_tools.core.text import kebab_case, slugify
 
 runner = CliRunner()
@@ -49,14 +48,23 @@ def combined_output(result: object) -> str:
 
 class CliTests(unittest.TestCase):
     def test_root_help_lists_registered_groups(self) -> None:
-        result = runner.invoke(app, ["--help"])
+        result = runner.invoke(app, ["-h"])
 
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("png2jpg", result.stdout)
-        self.assertIn("text", result.stdout)
-        self.assertIn("fs", result.stdout)
-        self.assertIn("system", result.stdout)
-        self.assertIn("convert", result.stdout)
+        listed = re.findall(
+            r"^  (\S+)", result.stdout.split("Commands:", 1)[1], flags=re.MULTILINE
+        )
+        self.assertEqual(
+            sorted(listed), ["image", "killport", "port", "text", "version"]
+        )
+
+    def test_removed_root_commands_are_unknown(self) -> None:
+        for name in ("convert", "png2jpg", "fs", "system"):
+            with self.subTest(name=name):
+                result = runner.invoke(app, [name, "--help"])
+
+                self.assertEqual(result.exit_code, 2)
+                self.assertIn("No such command", combined_output(result))
 
     def test_version_flag_prints_package_version(self) -> None:
         result = runner.invoke(app, ["--version"])
@@ -112,145 +120,6 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(result.stdout.strip(), "apisix-deployment-notes")
         copy_mock.assert_called_once_with("apisix-deployment-notes")
-
-    def test_fs_ls_lists_entries(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = Path(tmpdir)
-            (tmp_path / "alpha.txt").write_text("a", encoding="utf-8")
-            (tmp_path / "beta").mkdir()
-
-            result = runner.invoke(app, ["fs", "ls", str(tmp_path)])
-
-            self.assertEqual(result.exit_code, 0)
-            self.assertEqual(result.stdout.splitlines(), ["beta/", "alpha.txt"])
-            self.assertEqual(list_entries(tmp_path), ["beta/", "alpha.txt"])
-
-    def test_system_which_finds_python(self) -> None:
-        result = runner.invoke(app, ["system", "which", sys.executable])
-
-        self.assertEqual(result.exit_code, 0)
-        self.assertTrue(Path(result.stdout.strip()).exists())
-        self.assertEqual(resolve_executable(sys.executable), result.stdout.strip())
-
-    def test_png2jpg_command_converts_stem_with_default_quality(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            stem = Path(tmpdir) / "test_name"
-            png_path = stem.with_suffix(".png")
-            png_path.write_bytes(b"png")
-
-            with (
-                mock.patch("jzr_tools.core.image.resolve_executable", return_value="magick"),
-                mock.patch("jzr_tools.core.image.subprocess.run") as run_mock,
-            ):
-                result = runner.invoke(app, ["png2jpg", str(stem)])
-
-            self.assertEqual(result.exit_code, 0)
-            self.assertEqual(result.stdout.strip(), str(stem.with_suffix(".jpg")))
-            run_mock.assert_called_once_with(
-                ["magick", str(png_path), "-quality", "92", str(stem.with_suffix(".jpg"))],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-
-    def test_png2jpg_command_accepts_png_path_and_custom_quality(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            png_path = Path(tmpdir) / "test_name.png"
-            png_path.write_bytes(b"png")
-
-            with (
-                mock.patch("jzr_tools.core.image.resolve_executable", return_value="magick"),
-                mock.patch("jzr_tools.core.image.subprocess.run") as run_mock,
-            ):
-                result = runner.invoke(app, ["png2jpg", str(png_path), "--quality", "80"])
-
-            self.assertEqual(result.exit_code, 0)
-            run_mock.assert_called_once_with(
-                [
-                    "magick",
-                    str(png_path),
-                    "-quality",
-                    "80",
-                    str(png_path.with_suffix(".jpg")),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-
-    def test_png2jpg_command_fails_when_png_is_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            stem = Path(tmpdir) / "missing"
-
-            result = runner.invoke(app, ["png2jpg", str(stem)])
-
-            self.assertEqual(result.exit_code, 1)
-            self.assertIn(
-                f"PNG file not found: {stem.with_suffix('.png')}",
-                combined_output(result),
-            )
-
-    def test_png2jpg_command_accepts_dotted_basename(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            png_path = Path(tmpdir) / "shot.v2.png"
-            jpg_path = Path(tmpdir) / "shot.v2.jpg"
-            png_path.write_bytes(b"png")
-
-            with (
-                mock.patch("jzr_tools.core.image.resolve_executable", return_value="magick"),
-                mock.patch("jzr_tools.core.image.subprocess.run") as run_mock,
-            ):
-                result = runner.invoke(app, ["png2jpg", str(Path(tmpdir) / "shot.v2")])
-
-            self.assertEqual(result.exit_code, 0, combined_output(result))
-            self.assertEqual(result.stdout.strip(), str(jpg_path))
-            run_mock.assert_called_once_with(
-                ["magick", str(png_path), "-quality", "92", str(jpg_path)],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-
-    def test_png2jpg_command_reports_missing_png_for_dotted_basename(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            stem = Path(tmpdir) / "shot.v2"
-
-            result = runner.invoke(app, ["png2jpg", str(stem)])
-
-            self.assertEqual(result.exit_code, 1)
-            self.assertIn(
-                f"PNG file not found: {Path(tmpdir) / 'shot.v2.png'}",
-                combined_output(result),
-            )
-
-    def test_png2jpg_command_still_rejects_existing_non_png_file(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            photo = Path(tmpdir) / "photo.jpg"
-            photo.write_bytes(b"jpg")
-
-            with mock.patch("jzr_tools.core.image.subprocess.run") as run_mock:
-                result = runner.invoke(app, ["png2jpg", str(photo)])
-
-            self.assertEqual(result.exit_code, 1)
-            self.assertIn(
-                "Expected a PNG file path or a basename without an extension.",
-                combined_output(result),
-            )
-            run_mock.assert_not_called()
-
-    def test_png2jpg_command_fails_when_magick_is_missing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            stem = Path(tmpdir) / "test_name"
-            stem.with_suffix(".png").write_bytes(b"png")
-
-            with mock.patch("jzr_tools.core.image.resolve_executable", return_value=None):
-                result = runner.invoke(app, ["png2jpg", str(stem)])
-
-            self.assertEqual(result.exit_code, 1)
-            self.assertIn(
-                "ImageMagick command 'magick' was not found on PATH.",
-                combined_output(result),
-            )
 
     def test_module_entrypoint_runs(self) -> None:
         env = os.environ.copy()
@@ -355,25 +224,37 @@ class ImageCoreTests(unittest.TestCase):
 
 class ConvertCliTests(unittest.TestCase):
     def test_format_pair_subcommand_is_resolved_on_demand(self) -> None:
-        result = runner.invoke(app, ["convert", "png2jpg", "--help"])
+        result = runner.invoke(app, ["image", "png2jpg", "--help"])
 
         self.assertEqual(result.exit_code, 0)
         self.assertIn("Convert PNG files to JPG", result.stdout)
 
     def test_unknown_format_pair_is_rejected(self) -> None:
-        result = runner.invoke(app, ["convert", "foo2bar", "--help"])
+        result = runner.invoke(app, ["image", "foo2bar", "--help"])
 
         self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("No such command 'foo2bar'", combined_output(result))
 
-    def test_bare_invocation_without_ext_fails(self) -> None:
-        result = runner.invoke(app, ["convert", "--quality", "80"])
-
-        self.assertEqual(result.exit_code, 2)
-
-    def test_unsupported_ext_is_rejected(self) -> None:
-        result = runner.invoke(app, ["convert", "--ext", "docx"])
+    def test_convert_without_to_fails(self) -> None:
+        result = runner.invoke(app, ["image", "convert", "--quality", "80"])
 
         self.assertEqual(result.exit_code, 2)
+        self.assertNotIn("No such command", combined_output(result))
+        self.assertIn("--to", combined_output(result))
+
+    def test_unsupported_to_is_rejected(self) -> None:
+        result = runner.invoke(app, ["image", "convert", "--to", "docx"])
+
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("Unsupported extension", combined_output(result))
+
+    def test_unsupported_from_is_rejected(self) -> None:
+        result = runner.invoke(
+            app, ["image", "convert", "--to", "jpg", "--from", "docx"]
+        )
+
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("Unsupported extension", combined_output(result))
 
     @unittest.skipUnless(detect_backends(), "needs ImageMagick or ffmpeg")
     def test_dry_run_prints_backend_command_without_writing(self) -> None:
@@ -382,7 +263,7 @@ class ConvertCliTests(unittest.TestCase):
             source.write_bytes(ONE_PIXEL_PNG)
 
             result = runner.invoke(
-                app, ["convert", "png2jpg", str(source), "-q", "90", "--dry-run"]
+                app, ["image", "png2jpg", str(source), "-q", "90", "--dry-run"]
             )
 
             self.assertEqual(result.exit_code, 0)
@@ -390,14 +271,15 @@ class ConvertCliTests(unittest.TestCase):
             self.assertFalse((Path(tmpdir) / "shot.jpg").exists())
 
     @unittest.skipUnless(detect_backends(), "needs ImageMagick or ffmpeg")
-    def test_batch_ext_mode_converts_pattern_matches_only(self) -> None:
+    def test_batch_mode_converts_pattern_matches_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             (root / "IMG_one.png").write_bytes(ONE_PIXEL_PNG)
             (root / "skipme.png").write_bytes(ONE_PIXEL_PNG)
 
             result = runner.invoke(
-                app, ["convert", "--ext", "jpg", "--pattern", r"^IMG_", "-d", str(root)]
+                app,
+                ["image", "convert", "--to", "jpg", "--pattern", r"^IMG_", "-d", str(root)],
             )
 
             self.assertEqual(result.exit_code, 0)
@@ -413,21 +295,24 @@ class ConvertCliTests(unittest.TestCase):
             target = root / "shot.jpg"
             target.write_bytes(b"stale")
 
-            result = runner.invoke(app, ["convert", "png2jpg", str(source)])
+            result = runner.invoke(app, ["image", "png2jpg", str(source)])
 
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(target.read_bytes(), b"stale")
 
-            result = runner.invoke(app, ["convert", "png2jpg", str(source), "--overwrite"])
+            result = runner.invoke(
+                app, ["image", "png2jpg", str(source), "--overwrite"]
+            )
 
             self.assertEqual(result.exit_code, 0)
             self.assertNotEqual(target.read_bytes(), b"stale")
 
     def test_no_matching_files_exits_nonzero(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = runner.invoke(app, ["convert", "gif2png", "-d", tmpdir])
+            result = runner.invoke(app, ["image", "gif2png", "-d", tmpdir])
 
             self.assertEqual(result.exit_code, 1)
+            self.assertIn("No matching files.", combined_output(result))
 
 
 if __name__ == "__main__":

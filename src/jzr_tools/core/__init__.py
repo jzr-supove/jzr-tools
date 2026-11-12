@@ -1,1 +1,1 @@
-"""Core functionality for jzr_tools."""
+"""Core functionality for jzr-tools."""

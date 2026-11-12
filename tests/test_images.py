@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from typer.testing import CliRunner
+from click.testing import CliRunner
 
 from jzr_tools.cli import app
 from jzr_tools.core import images
@@ -247,7 +247,7 @@ class PlanTargetsTests(unittest.TestCase):
 class CollisionCliTests(unittest.TestCase):
     def _invoke(self, args: list[str]):  # noqa: ANN202
         with mock.patch(
-            "jzr_tools.commands.convert.resolve_backend", return_value=("magick", MAGICK)
+            "jzr_tools.commands.image.resolve_backend", return_value=("magick", MAGICK)
         ):
             return runner.invoke(app, args)
 
@@ -257,7 +257,7 @@ class CollisionCliTests(unittest.TestCase):
             (root / "x.png").write_bytes(ONE_PIXEL_PNG)
             (root / "x.webp").write_bytes(b"webp")
 
-            result = self._invoke(["convert", "--ext", "jpg", "-d", str(root), "--dry-run"])
+            result = self._invoke(["image", "convert", "--to", "jpg", "-d", str(root), "--dry-run"])
 
             self.assertEqual(result.exit_code, 0, combined(result))
             self.assertEqual(
@@ -275,7 +275,7 @@ class CollisionCliTests(unittest.TestCase):
             (root / "sub" / "x.png").write_bytes(ONE_PIXEL_PNG)
 
             result = self._invoke(
-                ["convert", "--ext", "jpg", "-d", str(root), "-r", "-o", str(out), "--dry-run"]
+                ["image", "convert", "--to", "jpg", "-d", str(root), "-r", "-o", str(out), "--dry-run"]
             )
 
             self.assertEqual(result.exit_code, 0, combined(result))
@@ -296,7 +296,7 @@ class CollisionCliTests(unittest.TestCase):
 
             result = self._invoke(
                 [
-                    "convert",
+                    "image",
                     "png2jpg",
                     str(base / "a" / "x.png"),
                     str(base / "b" / "x.png"),
@@ -322,14 +322,14 @@ class InvalidPatternTests(unittest.TestCase):
     def test_batch_mode_rejects_invalid_regex(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = runner.invoke(
-                app, ["convert", "--ext", "jpg", "-p", "[", "-d", tmpdir]
+                app, ["image", "convert", "--to", "jpg", "-p", "[", "-d", tmpdir]
             )
             self._assert_clean_usage_error(result)
 
     def test_pair_form_rejects_invalid_regex(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             result = runner.invoke(
-                app, ["convert", "png2jpg", "-p", "[", "-d", tmpdir]
+                app, ["image", "png2jpg", "-p", "[", "-d", tmpdir]
             )
             self._assert_clean_usage_error(result)
 
@@ -337,7 +337,7 @@ class InvalidPatternTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "x.png"
             source.write_bytes(ONE_PIXEL_PNG)
-            result = runner.invoke(app, ["convert", "png2jpg", str(source), "-p", "["])
+            result = runner.invoke(app, ["image", "png2jpg", str(source), "-p", "["])
             self._assert_clean_usage_error(result)
 
 
@@ -362,7 +362,7 @@ class UnsupportedTargetTests(unittest.TestCase):
             failed = mock.Mock(returncode=1, stdout="", stderr="boom")
             with (
                 mock.patch(
-                    "jzr_tools.commands.convert.resolve_backend",
+                    "jzr_tools.commands.image.resolve_backend",
                     return_value=("ffmpeg", FFMPEG),
                 ),
                 mock.patch(
@@ -370,7 +370,7 @@ class UnsupportedTargetTests(unittest.TestCase):
                 ) as run_mock,
             ):
                 result = runner.invoke(
-                    app, ["convert", "png2heic", str(source), "-b", "ffmpeg", *extra]
+                    app, ["image", "png2heic", str(source), "-b", "ffmpeg", *extra]
                 )
             return result, run_mock
 
@@ -400,12 +400,12 @@ class MagickEndToEndTests(unittest.TestCase):
             source = root / "anim.gif"
             source.write_bytes(three_frame_gif())
 
-            result = runner.invoke(app, ["convert", "gif2png", str(source), "-b", "magick"])
+            result = runner.invoke(app, ["image", "gif2png", str(source), "-b", "magick"])
 
             self.assertEqual(result.exit_code, 0, combined(result))
             self.assertEqual(sorted(p.name for p in root.iterdir()), ["anim.gif", "anim.png"])
 
-            again = runner.invoke(app, ["convert", "gif2png", str(source), "-b", "magick"])
+            again = runner.invoke(app, ["image", "gif2png", str(source), "-b", "magick"])
 
             self.assertEqual(again.exit_code, 0, combined(again))
             self.assertIn("skip", combined(again))
@@ -418,7 +418,7 @@ class MagickEndToEndTests(unittest.TestCase):
             (root / "100%d.png").write_bytes(ONE_PIXEL_PNG)
 
             result = runner.invoke(
-                app, ["convert", "png2jpg", str(root / "100%d.png"), "-b", "magick"]
+                app, ["image", "png2jpg", str(root / "100%d.png"), "-b", "magick"]
             )
 
             self.assertEqual(result.exit_code, 0, combined(result))
@@ -435,7 +435,7 @@ class FfmpegEndToEndTests(unittest.TestCase):
             (root / "100%d.png").write_bytes(ONE_PIXEL_PNG)
 
             result = runner.invoke(
-                app, ["convert", "png2jpg", str(root / "100%d.png"), "-b", "ffmpeg"]
+                app, ["image", "png2jpg", str(root / "100%d.png"), "-b", "ffmpeg"]
             )
 
             self.assertEqual(result.exit_code, 0, combined(result))

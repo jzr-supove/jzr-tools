@@ -1,4 +1,4 @@
-"""jzr_tools package."""
+"""jzr-tools: a personal cross-platform CLI toolkit."""
 
 __all__ = ["__version__"]
 

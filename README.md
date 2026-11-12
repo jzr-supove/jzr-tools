@@ -28,53 +28,70 @@ python -m jzr_tools --help
 
 ## Layout
 
-- `src/jzr_tools/cli.py`: root Typer app and command registration
+- `src/jzr_tools/cli.py`: root Click group and the command registry. Commands
+  are imported only when invoked, so each `jzr` call loads just what it needs;
+  a new command is added by listing it in `_COMMANDS`
 - `src/jzr_tools/commands/`: CLI-facing command modules
 - `src/jzr_tools/core/`: plain Python business logic
 - `tests/`: CLI and core behavior checks
 
-## Included v1 Commands
+## Commands
 
-- `jzr version`: print the installed toolkit version
-- `jzr killport 3000`: force-kill processes using local port 3000
-- `jzr png2jpg test_name`: convert `test_name.png` into `test_name.jpg`
-- `jzr text slug "Some Text"`: convert text into a slug
-- `jzr text kebab "ApiSix deployment Notes" --date -c`: convert text into lowercase kebab-case, optionally prefix it with today's ISO date, and optionally copy it to the clipboard
-- `jzr fs ls [PATH]`: list directory entries
-- `jzr system which COMMAND`: resolve an executable on `PATH`
-- `jzr convert ...`: convert images (see below)
+Commands follow one shape, `jzr <thing> <action>`, grouped by what they work
+on. Run `jzr -h`, or `-h` after any group or command, for the details.
+
+| Command | What it does |
+|---------|--------------|
+| `jzr image convert` | Convert images between formats, one file or a whole directory |
+| `jzr image <from>2<to>` | Shorthand for a format pair, e.g. `jzr image png2jpg` |
+| `jzr image formats` | List supported extensions and the backends found on `PATH` |
+| `jzr text slug` | Turn text into a URL-safe slug |
+| `jzr text kebab` | Turn text into lowercase kebab-case, optionally dated and copied |
+| `jzr port show` | Show which processes are using a local port |
+| `jzr port kill` | Force-kill the processes using a local port |
+| `jzr killport` | Shortcut for `jzr port kill` |
+| `jzr version` | Print the installed toolkit version |
 
 ## Image Conversion
 
-`jzr convert` shells out to ImageMagick (`magick`) or `ffmpeg`, whichever is
+`jzr image` shells out to ImageMagick (`magick`) or `ffmpeg`, whichever is
 installed. At least one of them is required; `magick` is preferred when both
 are present.
 
-Format-pair form, where the subcommand is any supported `<from>2<to>` pair:
+Name the files, or leave them out to convert a directory:
 
 ```bash
-jzr convert png2jpg photo.png -q 90        # one file
-jzr convert png2webp a.png b.png -q 80     # several files
-jzr convert heic2jpg -d ~/Photos -r        # every .heic under a directory
+jzr image convert photo.png --to jpg -q 90          # one file
+jzr image convert a.png b.webp --to avif            # several files
+jzr image convert --to jpg                          # every image in this directory
+jzr image convert --from heic --to jpg -d ~/Photos -r
+jzr image convert --to webp --pattern "^IMG_" -q 85 # only names matching a regex
 ```
 
-Batch form, selecting sources by regex instead:
+When the source format is fixed, the pair shorthand is shorter. It is the same
+command as `image convert --from <from> --to <to>`:
 
 ```bash
-jzr convert --ext jpg --pattern "^IMG_.*"
-jzr convert --ext webp --pattern "screenshot" -d ~/Pictures -r -q 85
+jzr image png2jpg photo.png -q 90
+jzr image png2jpg photo                # the extension may be left off
+jzr image heic2jpg -d ~/Photos -r      # every .heic under a directory
 ```
 
-`--pattern` is a regular expression matched against each candidate's path
-relative to the search directory, so it is just the filename unless
-`--recursive` is used.
-
-Shared options: `-q/--quality` (1-100), `-d/--dir`, `-p/--pattern`,
-`-r/--recursive`, `-o/--outdir`, `-b/--backend` (`auto`, `magick`, `ffmpeg`),
-`--overwrite`, `--dry-run`.
+Options: `-t/--to`, `-f/--from`, `-q/--quality` (1-100), `-d/--dir`,
+`-p/--pattern`, `-r/--recursive`, `-o/--outdir`, `-b/--backend` (`auto`,
+`magick`, `ffmpeg`), `--overwrite`, `--dry-run`.
 
 Behavior worth knowing:
 
+- Without `--from`, a directory scan picks up every supported image that is
+  not already in the target format.
+- With a known source format, a listed file with a different extension is
+  rejected rather than converted.
+- `--dir` and `--recursive` only apply when no files are listed; combining
+  them with listed files is an error.
+- `--pattern` is a regular expression matched against each candidate's path
+  relative to the search directory (just the file name unless `--recursive`
+  is used), or against the file name of each listed file.
 - Outputs land beside their source unless `--outdir` is given. When a
   directory is scanned with `--recursive`, its subdirectories are recreated
   under `--outdir`; explicitly listed sources are written flat.
@@ -96,16 +113,23 @@ Behavior worth knowing:
 - Quality maps per backend: ImageMagick gets `-quality`, ffmpeg gets `-q:v`
   (inverted 2-31 scale) for JPEG, `-quality` for WebP, and `-crf` for AVIF.
 
-`jzr convert formats` lists the supported extensions and which backends were
+`jzr image formats` lists the supported extensions and which backends were
 found on `PATH`.
 
-## Kill a Port
+## Ports
+
+See what is using a port, then free it:
 
 ```bash
-jzr killport 3000
+jzr port show 3000
+jzr port kill 3000
+jzr killport 3000      # shortcut for `jzr port kill`
 ```
 
-Force-kills all visible processes bound to the exact local port, for TCP and UDP
+`jzr port show` lists each process with its PID, name, protocol and local
+address, and changes nothing.
+
+`jzr port kill` force-kills all visible processes bound to the exact local port, for TCP and UDP
 over IPv4 and IPv6. Works on Windows, Linux, and macOS using `psutil`, installed
 with the toolkit. On Unix this sends SIGKILL; on Windows it uses TerminateProcess.
 Remote connections to the port are not targeted, and unrelated child processes
@@ -144,7 +168,7 @@ and Windows may reserve the port again later. Administered exclusions (`*`) are
 reported without restarting HNS. The command does not delete reservations or
 change dynamic port ranges. Linux and macOS reject `--restart-hns`.
 
-## Text Kebab Shortcut
+## Text
 
 Convert text into lowercase kebab-case:
 
@@ -172,24 +196,3 @@ accents, Russian and Uzbek Cyrillic are transliterated (`Привет мир` be
 `privet-mir`), and letters such as `ß` and `ø` are spelled out. Other scripts
 are dropped; if nothing is left, the command exits `1` instead of printing an
 empty result.
-
-## ImageMagick Shortcut
-
-If ImageMagick is installed and `magick` is available on `PATH`, you can convert a
-PNG without repeating the basename:
-
-```bash
-jzr png2jpg test_name
-```
-
-This runs the equivalent of:
-
-```bash
-magick test_name.png -quality 92 test_name.jpg
-```
-
-You can also pass an explicit PNG path or override the quality:
-
-```bash
-jzr png2jpg path/to/test_name.png --quality 85
-```

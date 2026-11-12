@@ -1,16 +1,15 @@
-"""Plain Python system helpers."""
+"""Plain Python system helpers.
 
-import platform
-import shutil
-import subprocess
-
-
-def resolve_executable(command: str) -> str | None:
-    """Return the resolved executable path if it exists."""
-    return shutil.which(command)
+Standard-library modules are imported inside the functions that need them:
+this module is loaded by commands that never touch the clipboard, and
+every import adds to the start-up time of each `jzr` call.
+"""
 
 
 def _clipboard_command() -> list[str] | None:
+    import platform
+    import shutil
+
     system = platform.system()
 
     if system == "Windows":
@@ -18,11 +17,11 @@ def _clipboard_command() -> list[str] | None:
     if system == "Darwin":
         return ["pbcopy"]
 
-    if resolve_executable("wl-copy") is not None:
+    if shutil.which("wl-copy") is not None:
         return ["wl-copy"]
-    if resolve_executable("xclip") is not None:
+    if shutil.which("xclip") is not None:
         return ["xclip", "-selection", "clipboard"]
-    if resolve_executable("xsel") is not None:
+    if shutil.which("xsel") is not None:
         return ["xsel", "--clipboard", "--input"]
 
     return None
@@ -30,6 +29,8 @@ def _clipboard_command() -> list[str] | None:
 
 def copy_to_clipboard(text: str) -> None:
     """Copy text to the system clipboard using native clipboard commands."""
+    import subprocess
+
     command = _clipboard_command()
     if command is None:
         raise RuntimeError(
