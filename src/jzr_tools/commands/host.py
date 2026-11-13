@@ -9,6 +9,7 @@ import sys
 
 import click
 
+from jzr_tools.cli import LazyGroup
 from jzr_tools.core.display import cut, display_width, human_size, pad, size_pair
 from jzr_tools.core.host import GpuInfo, Status, StatusSampler, StorageInfo
 from jzr_tools.frame import (
@@ -40,9 +41,20 @@ _ENTER_SCREEN, _LEAVE_SCREEN = "\x1b[?1049h", "\x1b[?1049l"
 _HOME, _CLEAR_LINE, _CLEAR_BELOW = "\x1b[H", "\x1b[K", "\x1b[J"
 
 
-@click.group()
+# Other host commands live in their own modules and are loaded only when
+# used, so `jzr host status` does not pay for them. The help is repeated here
+# for the same reason as in `jzr_tools.cli`.
+_COMMANDS: dict[str, tuple[str, str]] = {
+    "clean": (
+        "jzr_tools.commands.host_clean:clean",
+        "Find caches and other disposable data, and remove what you pick.",
+    ),
+}
+
+
+@click.group(cls=LazyGroup, lazy_commands=_COMMANDS)
 def app() -> None:
-    """Inspect this machine."""
+    """Inspect and clean up this machine."""
 
 
 @dataclass(frozen=True)

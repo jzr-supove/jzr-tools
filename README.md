@@ -51,6 +51,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr port kill` | Force-kill the processes using a local port |
 | `jzr killport` | Shortcut for `jzr port kill` |
 | `jzr host status` | Show host, CPU, memory, storage and GPU status |
+| `jzr host clean` | Find caches and other disposable data, and remove what you pick |
 | `jzr version` | Print the installed toolkit version |
 
 ## Image Conversion
@@ -248,6 +249,67 @@ Behavior worth knowing:
 The Windows and macOS code paths, AMD GPU readings and battery reporting are
 covered by tests on recorded sample output; they have not been run on real
 hardware yet.
+
+## Host clean
+
+Find what can be deleted to get disk space back, tick what should go, confirm:
+
+```bash
+jzr host clean                    # scan, pick from a checkbox list, confirm, remove
+jzr host clean --dry-run          # only look: what was found and what would be done
+jzr host clean --yes              # no questions: remove everything that is safe to remove
+jzr host clean --only uv,pip      # just these items (asks once; add --yes to skip that)
+jzr host clean --json             # the scan, for scripts; removes nothing
+```
+
+```text
+? What should be removed? (Use arrow keys to move, <space> to select, <a> to toggle, <i> to invert)
+   Safe to remove
+ » ● uv cache                         24.1 GiB
+   ● Docker build cache               19.9 GiB
+   ● pip cache                        15.6 GiB
+   Review first
+   ○ Docker images no container uses  35.3 GiB
+   ○ Trash                             4.2 GiB
+  Description: Packages are downloaded and built again when needed. Runs: uv cache clean
+? Remove 3 items, about 59.6 GiB? (y/N)
+```
+
+What it looks for (Linux for now):
+
+| Tier | Items | Ticked by default |
+|------|-------|-------------------|
+| Safe to remove | Docker build cache; uv, pip, npm, Cargo, Yarn, pnpm, Go build, node-gyp, Mesa shader and thumbnail caches | yes |
+| Review first | Trash; stopped Docker containers; Docker images no container uses; any other folder of 100 MiB or more in `~/.cache` (listed as `cache:<name>`) | no |
+| Needs root | systemd journal beyond the newest 500 MiB; the dnf or apt package cache | no |
+
+Behavior worth knowing:
+
+- Nothing is removed before you confirm, and `--dry-run` and `--json` never
+  remove anything. `--yes` on its own removes the safe tier only; anything
+  else has to be ticked or named with `--only`.
+- It only looks in known places. It does not hunt for "temporary-looking"
+  files, and it never offers Docker volumes, project folders or `/tmp`.
+- Where a tool has its own clean-up command it is used (`uv cache clean`,
+  `npm cache clean --force`, `docker builder prune --all --force`,
+  `journalctl --vacuum-size=500M`, `dnf clean all`); otherwise the cache
+  folder is emptied and kept. `--dry-run` shows which.
+- Root items run through `sudo`, which asks for your password itself. With
+  `--yes` they run as `sudo -n` and fail instead of asking.
+- Sizes are estimates. The uv cache shares files with your environments, so
+  less may come back than shown; the last line reports the free space before
+  and after.
+- Symbolic links are never followed, and a link inside `~/.cache` is never
+  offered as a cache.
+- A scan of a large cache takes a while (about 25 seconds here for 68 GiB).
+- Without a terminal it refuses to guess: pass `--dry-run`, `--json` or
+  `--yes`.
+- Exit code `1` means something could not be removed (the rest still was) or
+  the list was cancelled.
+
+Removal has been run against a throwaway home directory only; the Docker,
+`sudo`, journal, dnf and apt commands are covered by tests with the commands
+faked and have not been run for real.
 
 ## Text
 

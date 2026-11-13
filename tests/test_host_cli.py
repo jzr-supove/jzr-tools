@@ -135,7 +135,7 @@ class HelpTests(unittest.TestCase):
                 result = runner.invoke(app, ["host", flag])
 
                 self.assertEqual(result.exit_code, 0, combined(result))
-                self.assertIn("Inspect this machine.", result.stdout)
+                self.assertIn("Inspect and clean up this machine.", result.stdout)
                 self.assertIn("status", result.stdout.split("Commands:", 1)[1])
 
     def test_command_help_lists_every_option(self) -> None:
