@@ -89,13 +89,27 @@ class MagickCommandTests(unittest.TestCase):
                 )
                 self.assertEqual(command[1], "anim.png")
 
-    def test_percent_in_target_is_doubled(self) -> None:
-        command = build_command("magick", MAGICK, Path("100%d.png"), Path("100%d.jpg"))
-        self.assertEqual(command[-1], "100%%d.jpg")
+    def test_percent_source_drops_extra_frames_instead_of_using_a_selector(self) -> None:
+        for name in ("100%d.png", "50%.png", "d%d/shot.png"):
+            with self.subTest(source=name):
+                command = build_command("magick", MAGICK, Path(name), Path("out.jpg"))
+                self.assertEqual(command, ["magick", name, "-delete", "1--1", "out.jpg"])
 
-    def test_percent_in_source_is_doubled_when_frame_selector_is_added(self) -> None:
-        command = build_command("magick", MAGICK, Path("100%d.png"), Path("100%d.jpg"))
-        self.assertEqual(command[1], "100%%d.png[0]")
+    def test_percent_source_keeps_frame_drop_before_quality_option(self) -> None:
+        command = build_command(
+            "magick", MAGICK, Path("100%d.gif"), Path("out.jpg"), quality=80
+        )
+        self.assertEqual(
+            command, ["magick", "100%d.gif", "-delete", "1--1", "-quality", "80", "out.jpg"]
+        )
+
+    def test_percent_source_with_animated_target_keeps_every_frame(self) -> None:
+        command = build_command("magick", MAGICK, Path("100%d.png"), Path("out.gif"))
+        self.assertEqual(command, ["magick", "100%d.png", "out.gif"])
+
+    def test_percent_is_never_doubled(self) -> None:
+        command = build_command("magick", MAGICK, Path("100%d.png"), Path("out.jpg"))
+        self.assertFalse([part for part in command if "%%" in part])
 
     def test_names_without_percent_are_untouched(self) -> None:
         command = build_command("magick", MAGICK, Path("a b.png"), Path("a b.jpg"))
@@ -114,6 +128,17 @@ class FfmpegCommandTests(unittest.TestCase):
                 index = command.index("-pattern_type")
                 self.assertEqual(command[index + 1], "none")
                 self.assertLess(index, command.index("-i"))
+
+    def test_percent_image2_sources_force_the_image2_demuxer(self) -> None:
+        # `-pattern_type` only exists on image2, and ffmpeg picks that demuxer
+        # by itself only when the name is a valid sequence pattern.
+        for name in ("100%d.png", "50%.png", "%d0%bf.jpg", "d%d/shot.png"):
+            with self.subTest(source=name):
+                command = self._command(name, "out.jpg")
+                index = command.index("-i")
+                self.assertEqual(
+                    command[index - 4 : index], ["-f", "image2", "-pattern_type", "none"]
+                )
 
     def test_pattern_type_not_added_without_percent(self) -> None:
         command = self._command("shot.png", "shot.jpg")
@@ -176,6 +201,89 @@ class ConvertFileOutcomeTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.status, "converted")
+
+
+class MagickPercentTargetTests(unittest.TestCase):
+    """A `%` target never reaches ImageMagick: it is staged, then renamed."""
+
+    def _convert(self, tmpdir: str, fake_run, **options):  # noqa: ANN001, ANN003, ANN202
+        source = Path(tmpdir) / "100%d.png"
+        source.write_bytes(ONE_PIXEL_PNG)
+        target = Path(tmpdir) / "o%d" / "100%d.jpg"
+        with mock.patch(
+            "jzr_tools.core.images.subprocess.run", side_effect=fake_run
+        ) as run_mock:
+            result = convert_file(
+                source, target, backend="magick", executable=MAGICK, **options
+            )
+        return result, target, run_mock
+
+    def test_output_is_written_under_a_plain_name_then_renamed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            seen: dict[str, object] = {}
+
+            def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
+                seen["command"], seen["cwd"] = command, kwargs.get("cwd")
+                (Path(kwargs["cwd"]) / command[-1]).write_bytes(b"jpg")
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            result, target, _ = self._convert(tmpdir, fake_run)
+
+            self.assertEqual(result.status, "converted", result.detail)
+            self.assertEqual(target.read_bytes(), b"jpg")
+            self.assertEqual([p.name for p in target.parent.iterdir()], ["100%d.jpg"])
+            command = seen["command"]
+            self.assertNotIn("%", command[-1])
+            self.assertEqual(Path(command[-1]).name, command[-1])
+            self.assertEqual(seen["cwd"], target.parent)
+            self.assertTrue(Path(command[1]).is_absolute())
+
+    def test_failure_removes_the_partial_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+
+            def fake_run(command, **kwargs):  # noqa: ANN001, ANN003
+                (Path(kwargs["cwd"]) / command[-1]).write_bytes(b"partial")
+                return mock.Mock(returncode=1, stdout="", stderr="boom")
+
+            result, target, _ = self._convert(tmpdir, fake_run)
+
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.detail, "boom")
+            self.assertEqual(list(target.parent.iterdir()), [])
+
+    def test_exit_zero_without_output_is_reported_as_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result, target, _ = self._convert(
+                tmpdir, lambda command, **kwargs: mock.Mock(returncode=0, stdout="", stderr="")
+            )
+
+            self.assertEqual(result.status, "failed")
+            self.assertIn("100%d.jpg", result.detail)
+            self.assertFalse(target.exists())
+
+    def test_dry_run_explains_the_rename_and_runs_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result, target, run_mock = self._convert(tmpdir, None, dry_run=True)
+
+            self.assertEqual(result.status, "planned")
+            self.assertIn(result.command[-1], result.detail)
+            self.assertIn("100%d.jpg", result.detail)
+            run_mock.assert_not_called()
+            self.assertFalse(target.parent.exists())
+
+    def test_ffmpeg_and_plain_magick_targets_are_not_staged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "100%d.png"
+            source.write_bytes(ONE_PIXEL_PNG)
+            cases = (("ffmpeg", FFMPEG, "100%d.jpg"), ("magick", MAGICK, "plain.jpg"))
+            for backend, executable, name in cases:
+                with self.subTest(backend=backend):
+                    target = Path(tmpdir) / name
+                    result = convert_file(
+                        source, target, backend=backend, executable=executable, dry_run=True
+                    )
+                    self.assertEqual(result.command[-1], str(target))
+                    self.assertEqual(result.detail, "")
 
 
 class PlanTargetsTests(unittest.TestCase):

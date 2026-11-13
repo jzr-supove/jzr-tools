@@ -126,6 +126,8 @@ def _conversion_options(function: Callable[..., None]) -> Callable[..., None]:
 def _report(result: ConversionResult) -> None:
     if result.status == "planned":
         click.echo(shlex.join(result.command))
+        if result.detail:
+            click.echo(f"note: {result.detail}", err=True)
     elif result.status == "converted":
         click.echo(f"{result.source} -> {result.target}")
     elif result.status == "skipped":

@@ -1,7 +1,11 @@
 """Plain Python image conversion helpers.
 
 Conversions are delegated to an external backend: ImageMagick (``magick``) or
-``ffmpeg``. Nothing here touches Typer, so the logic stays testable on its own.
+``ffmpeg``. Nothing here touches Click, so the logic stays testable on its own.
+
+Both backends read ``%`` in a path as the start of a numbered-sequence escape
+(``%d``, ``%03d``). A ``%`` in a file or directory name is always meant
+literally here, so each backend is driven in a way that never expands it.
 """
 
 from __future__ import annotations
@@ -10,6 +14,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import subprocess
 from typing import Sequence
@@ -39,7 +44,7 @@ LOSSY_EXTENSIONS = frozenset({"avif", "heic", "heif", "jpeg", "jpg", "webp"})
 # after the first one.
 ANIMATED_EXTENSIONS = frozenset({"apng", "avif", "gif", "webp"})
 
-# Spellings of the same format, so `jzr convert jpeg2png` also picks up `.jpg`.
+# Spellings of the same format, so `jzr image jpeg2png` also picks up `.jpg`.
 _EXTENSION_ALIASES = (
     frozenset({"jpg", "jpeg"}),
     frozenset({"tif", "tiff"}),
@@ -51,8 +56,10 @@ BACKEND_PREFERENCE = ("magick", "ffmpeg")
 # Formats a backend has no encoder or muxer for, so it fails on every file.
 _UNWRITABLE_EXTENSIONS = {"ffmpeg": frozenset({"heic", "heif"})}
 
-# Sources ffmpeg opens with its image2 demuxer, which reads `%` in a path as a
-# numbered-sequence pattern unless told otherwise.
+# Sources ffmpeg's image2 demuxer can read. A path that looks like a
+# numbered-sequence pattern is handed to that demuxer and expanded, so for
+# these formats a path containing `%` is opened with it explicitly, with
+# pattern matching turned off.
 _FFMPEG_IMAGE2_EXTENSIONS = frozenset(
     {"bmp", "jpeg", "jpg", "png", "ppm", "tga", "tif", "tiff", "webp"}
 )
@@ -179,18 +186,25 @@ def build_command(
 
     if backend == "magick":
         source_argument = str(source)
-        if single_frame:
-            # Without a frame selector a multi-frame source (GIF, ICO, TIFF)
-            # is written as `name-0.ext`, `name-1.ext`, ... instead of the
-            # target. A path carrying a selector has its `%` escapes expanded,
-            # so literal percent signs must be doubled.
-            source_argument = source_argument.replace("%", "%%") + "[0]"
-        command = [*executable, source_argument]
+        command = [*executable]
+        # A multi-frame source (GIF, ICO, TIFF) must be cut down to one frame,
+        # or it is written as `name-0.ext`, `name-1.ext`, ... instead of the
+        # target.
+        if not single_frame:
+            command.append(source_argument)
+        elif "%" not in source_argument:
+            command.append(source_argument + "[0]")
+        else:
+            # A frame selector makes ImageMagick expand `%d` escapes in the
+            # path, and whether `%%` escapes them depends on its version. A
+            # path without a selector is always read literally, so the other
+            # frames are dropped after reading instead.
+            command += [source_argument, "-delete", "1--1"]
         if quality is not None:
             command += ["-quality", str(quality)]
-        # Output names always have `%` escapes expanded (`%d` is the frame
-        # number), so a literal percent sign is doubled here too.
-        command.append(str(target).replace("%", "%%"))
+        # `%d` escapes in the output path are expanded and cannot be escaped
+        # portably, so `convert_file` never passes a target containing `%`.
+        command.append(str(target))
         return command
 
     if backend == "ffmpeg":
@@ -205,7 +219,7 @@ def build_command(
             "%" in str(source)
             and normalize_extension(source.suffix) in _FFMPEG_IMAGE2_EXTENSIONS
         ):
-            command += ["-pattern_type", "none"]
+            command += ["-f", "image2", "-pattern_type", "none"]
         command += ["-i", str(source)]
         command += _ffmpeg_quality_args(target_extension, quality)
         if single_frame:
@@ -328,16 +342,41 @@ def convert_file(
     dry_run: bool = False,
 ) -> ConversionResult:
     """Convert one file, returning what happened instead of raising."""
-    command = tuple(
-        build_command(
-            backend,
-            executable,
-            source,
-            target,
-            quality=quality,
-            overwrite=overwrite,
+    # ImageMagick expands `%d` escapes in an output path and has no escape for
+    # them that works across versions. Such a target is written under a
+    # `%`-free name from inside its own directory, then renamed.
+    staged = backend == "magick" and "%" in str(target)
+    if staged:
+        work_dir = target.parent
+        placeholder = Path(f"jzr-tmp-{secrets.token_hex(8)}{target.suffix}")
+        program = executable[0]
+        if os.path.dirname(program):
+            program = os.path.abspath(program)
+        command = tuple(
+            build_command(
+                backend,
+                [program, *executable[1:]],
+                # Absolute, because the backend runs in the target directory.
+                Path(os.path.abspath(source)),
+                placeholder,
+                quality=quality,
+                overwrite=overwrite,
+            )
         )
-    )
+        produced = work_dir / placeholder
+    else:
+        work_dir = None
+        command = tuple(
+            build_command(
+                backend,
+                executable,
+                source,
+                target,
+                quality=quality,
+                overwrite=overwrite,
+            )
+        )
+        produced = target
 
     if source.resolve() == target.resolve():
         return ConversionResult(source, target, command, "skipped", "source is the target")
@@ -348,11 +387,21 @@ def convert_file(
         )
 
     if dry_run:
-        return ConversionResult(source, target, command, "planned")
+        detail = ""
+        if staged:
+            detail = (
+                f"{backend} runs in {work_dir} and writes {placeholder}, "
+                f"which is then renamed to {target.name}"
+            )
+        return ConversionResult(source, target, command, "planned", detail)
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    completed = subprocess.run(list(command), capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        list(command), capture_output=True, text=True, check=False, cwd=work_dir
+    )
     if completed.returncode != 0:
+        if staged:
+            produced.unlink(missing_ok=True)
         detail = (completed.stderr or completed.stdout).strip().splitlines()
         return ConversionResult(
             source,
@@ -362,7 +411,7 @@ def convert_file(
             detail[-1] if detail else f"{backend} exited with {completed.returncode}",
         )
 
-    if not target.exists():
+    if not produced.exists():
         return ConversionResult(
             source,
             target,
@@ -370,5 +419,14 @@ def convert_file(
             "failed",
             f"{backend} reported success but did not write {target.name}",
         )
+
+    if staged:
+        try:
+            os.replace(produced, target)
+        except OSError as error:
+            produced.unlink(missing_ok=True)
+            return ConversionResult(
+                source, target, command, "failed", f"could not write {target.name}: {error}"
+            )
 
     return ConversionResult(source, target, command, "converted")

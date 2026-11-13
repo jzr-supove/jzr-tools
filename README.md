@@ -105,6 +105,11 @@ Behavior worth knowing:
 - A failed file does not stop the batch; the run exits `1` and reports which
   files failed.
 - `--dry-run` prints the exact backend command for each file.
+- A `%` in a file or directory name is taken literally, never as a
+  numbered-sequence escape such as `%d`. ImageMagick cannot be told to leave
+  one alone in an output path, so an output whose path contains `%` is written
+  under a temporary `jzr-tmp-...` name in the target directory and then
+  renamed; `--dry-run` shows that name and prints a note saying so.
 - `-q/--quality` is the JPEG-style knob, 1-100, higher is better. It behaves as
   expected for the lossy formats (`jpg`, `webp`, `avif`, `heic`). For `png` and
   `tiff` it only tunes compression -- those stay lossless -- and for `gif`,
