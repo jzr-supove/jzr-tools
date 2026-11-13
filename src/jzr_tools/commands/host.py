@@ -2,29 +2,33 @@
 
 from __future__ import annotations
 
-from dataclasses import astuple, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 import json
-import os
-import re
-import shutil
 import sys
-import unicodedata
 
 import click
 
+from jzr_tools.core.display import cut, display_width, human_size, pad, size_pair
 from jzr_tools.core.host import GpuInfo, Status, StatusSampler, StorageInfo
+from jzr_tools.frame import (
+    ASCII,
+    GAP,
+    UNICODE,
+    Painter,
+    draw_frame,
+    needs_ascii,
+    terminal_size,
+    use_color,
+    writable,
+)
 
-_BAR_WIDTH = 20
-_GAP = "  "
 # Longer keys (a USB drive's mount point, a Windows interface name) are
 # shortened so the report still fits an 80-column terminal.
 _KEY_LIMIT = 24
 # Room for a sensor's temperatures before they wrap onto another row. With a
 # 15-column key (a typical interface name) the detail view fits 80 columns.
 _FLOW_WIDTH = 55
-_MINIMUM_WIDTH = 20
-_UNITS = ("B", "KiB", "MiB", "GiB", "TiB", "PiB")
 
 # CPU usage needs two samples; this is the gap for a reading shown at once.
 _FIRST_WINDOW = 0.25
@@ -34,36 +38,11 @@ _MINIMUM_INTERVAL = 0.2
 _HIDE_CURSOR, _SHOW_CURSOR = "\x1b[?25l", "\x1b[?25h"
 _ENTER_SCREEN, _LEAVE_SCREEN = "\x1b[?1049h", "\x1b[?1049l"
 _HOME, _CLEAR_LINE, _CLEAR_BELOW = "\x1b[H", "\x1b[K", "\x1b[J"
-_COLOR_CODE = re.compile(r"(\x1b\[[0-9;]*m)")
-_COLOR_RESET = "\x1b[0m"
 
 
 @click.group()
 def app() -> None:
     """Inspect this machine."""
-
-
-@dataclass(frozen=True)
-class _Glyphs:
-    """The characters a report is drawn with."""
-
-    top_left: str
-    top_right: str
-    bottom_left: str
-    bottom_right: str
-    divider_left: str
-    divider_right: str
-    horizontal: str
-    vertical: str
-    bar_open: str
-    bar_full: str
-    bar_empty: str
-    bar_close: str
-    cut: str
-
-
-_UNICODE = _Glyphs("╭", "╮", "╰", "╯", "├", "┤", "─", "│", "", "█", "░", "", "…")
-_ASCII = _Glyphs("+", "+", "+", "+", "+", "+", "-", "|", "[", "#", ".", "]", ">")
 
 
 @dataclass(frozen=True)
@@ -87,83 +66,19 @@ class _Usage:
 _Line = _Row | _Usage | str
 
 
-def _columns(text: str) -> int:
-    """Return the terminal columns ``text`` takes, not counting colour codes."""
-    text = _COLOR_CODE.sub("", text)
-    if text.isascii():
-        return len(text)
-    return sum(
-        2 if unicodedata.east_asian_width(char) in "WF" else 1
-        for char in text
-        if not unicodedata.combining(char)
-    )
-
-
-def _pad(text: str, width: int, *, right: bool = False) -> str:
-    space = " " * max(0, width - _columns(text))
-    return space + text if right else text + space
-
-
-def _cut(text: str, width: int, marker: str) -> str:
-    """Shorten ``text`` to ``width`` columns, ending it with ``marker``."""
-    if _columns(text) <= width:
-        return text
-    room = width - len(marker)
-    kept: list[str] = []
-    coloured = False
-    for index, piece in enumerate(_COLOR_CODE.split(text)):
-        if index % 2:
-            # A colour code: it takes no room, and must be closed after a cut.
-            kept.append(piece)
-            coloured = True
-            continue
-        for char in piece:
-            room -= _columns(char)
-            if room < 0:
-                break
-            kept.append(char)
-        if room < 0:
-            break
-    return "".join(kept) + (_COLOR_RESET if coloured else "") + marker
-
-
 def _cut_middle(text: str, width: int, marker: str) -> str:
     """Shorten ``text`` to ``width`` columns, keeping its start and its end."""
-    if _columns(text) <= width:
+    if display_width(text) <= width:
         return text
     tail_room = (width - len(marker)) // 2
     tail: list[str] = []
     for char in reversed(text):
-        tail_room -= _columns(char)
+        tail_room -= display_width(char)
         if tail_room < 0:
             break
         tail.append(char)
     ending = "".join(reversed(tail))
-    return _cut(text, width - _columns(ending), marker) + ending
-
-
-def _unit_for(size: float) -> int:
-    """Return the index of the largest unit that keeps ``size`` at 1 or more."""
-    index = 0
-    while size >= 1024 and index < len(_UNITS) - 1:
-        size /= 1024
-        index += 1
-    return index
-
-
-def _scaled(size: float, unit: int) -> str:
-    return f"{size / 1024**unit:.0f}" if unit == 0 else f"{size / 1024**unit:.1f}"
-
-
-def _size(size: float) -> str:
-    unit = _unit_for(size)
-    return f"{_scaled(size, unit)} {_UNITS[unit]}"
-
-
-def _size_pair(used: float, total: float) -> str:
-    """Write used and total in the total's unit: ``22.5 / 31.1 GiB``."""
-    unit = _unit_for(total)
-    return f"{_scaled(used, unit)} / {_scaled(total, unit)} {_UNITS[unit]}"
+    return cut(text, width - display_width(ending), marker) + ending
 
 
 def _uptime(seconds: float) -> str:
@@ -189,40 +104,7 @@ def _temperature(celsius: float) -> str:
     return f"{celsius:.0f}°C"
 
 
-class _Painter:
-    """Formats the coloured parts of a report, or plain text without colour."""
-
-    def __init__(self, color: bool, glyphs: _Glyphs) -> None:
-        self.color = color
-        self.glyphs = glyphs
-
-    def _paint(self, text: str, percent: float | None = None, **style: object) -> str:
-        if not self.color:
-            return text
-        if percent is not None:
-            style["fg"] = "green" if percent < 70 else "yellow" if percent < 90 else "red"
-        return click.style(text, **style)
-
-    def strong(self, text: str) -> str:
-        return self._paint(text, bold=True)
-
-    def dim(self, text: str) -> str:
-        return self._paint(text, dim=True)
-
-    def percent(self, percent: float) -> str:
-        return self._paint(f"{percent:3.0f}%", percent)
-
-    def usage(self, percent: float) -> str:
-        """A bar and the figure it stands for: ``█████░░░░░░░░░░░░░░░   25%``."""
-        glyphs = self.glyphs
-        filled = min(_BAR_WIDTH, max(0, round(percent * _BAR_WIDTH / 100)))
-        bar = self._paint(glyphs.bar_full * filled, percent) + self.dim(
-            glyphs.bar_empty * (_BAR_WIDTH - filled)
-        )
-        return f"{glyphs.bar_open}{bar}{glyphs.bar_close}{_GAP}{self.percent(percent)}"
-
-
-def _flow(key: str, cells: list[str], per_row: int, gap: str = _GAP) -> list[_Line]:
+def _flow(key: str, cells: list[str], per_row: int, gap: str = GAP) -> list[_Line]:
     """Lay ``cells`` out in rows under one key, which only the first row shows."""
     return [
         _Row(key if start == 0 else "", gap.join(cells[start : start + per_row]).rstrip())
@@ -240,10 +122,10 @@ def _shown_once_per_device(storage: tuple[StorageInfo, ...]) -> list[StorageInfo
     return [mount for mount in storage if shortest[mount.device] is mount]
 
 
-def _host_lines(status: Status, paint: _Painter, detail: bool) -> list[_Line]:
+def _host_lines(status: Status, paint: Painter, detail: bool) -> list[_Line]:
     host = status.host
     lines: list[_Line] = [
-        _GAP.join(part for part in (host.os, host.arch, _uptime(host.uptime_seconds)) if part)
+        GAP.join(part for part in (host.os, host.arch, _uptime(host.uptime_seconds)) if part)
     ]
     if detail:
         about = []
@@ -252,11 +134,11 @@ def _host_lines(status: Status, paint: _Painter, detail: bool) -> list[_Line]:
         if host.boot_time:
             about.append(f"booted {_when(host.boot_time)}")
         if about:
-            lines.append(paint.dim(_GAP.join(about)))
+            lines.append(paint.dim(GAP.join(about)))
     return lines
 
 
-def _cpu_lines(status: Status, paint: _Painter, detail: bool) -> list[_Line]:
+def _cpu_lines(status: Status, paint: Painter, detail: bool) -> list[_Line]:
     cpu = status.cpu
     counts = []
     if cpu.physical_cores:
@@ -264,11 +146,11 @@ def _cpu_lines(status: Status, paint: _Painter, detail: bool) -> list[_Line]:
     if cpu.logical_cores:
         counts.append(f"{cpu.logical_cores} threads")
     lines: list[_Line] = [
-        paint.strong(cpu.model) + (f"{_GAP}({', '.join(counts)})" if counts else ""),
+        paint.strong(cpu.model) + (f"{GAP}({', '.join(counts)})" if counts else ""),
         _Usage("Usage", cpu.usage_percent),
     ]
     if cpu.load_average is not None:
-        lines.append(_Row("Load", _GAP.join(f"{value:.2f}" for value in cpu.load_average)))
+        lines.append(_Row("Load", GAP.join(f"{value:.2f}" for value in cpu.load_average)))
     if detail:
         if cpu.frequency_mhz is not None:
             lines.append(_Row("Frequency", f"{cpu.frequency_mhz:.0f} MHz"))
@@ -284,40 +166,40 @@ def _cpu_lines(status: Status, paint: _Painter, detail: bool) -> list[_Line]:
 def _memory_lines(status: Status, detail: bool) -> list[_Line]:
     memory = status.memory
     lines: list[_Line] = [
-        _Usage("RAM", memory.percent, _size_pair(memory.used_bytes, memory.total_bytes))
+        _Usage("RAM", memory.percent, size_pair(memory.used_bytes, memory.total_bytes))
     ]
     if detail:
-        lines.append(_Row("Available", _size(memory.available_bytes)))
+        lines.append(_Row("Available", human_size(memory.available_bytes)))
         if memory.swap_total_bytes > 0:
-            pair = _size_pair(memory.swap_used_bytes, memory.swap_total_bytes)
+            pair = size_pair(memory.swap_used_bytes, memory.swap_total_bytes)
             lines.append(_Usage("Swap", memory.swap_percent, pair))
         else:
             lines.append(_Row("Swap", "none"))
     return lines
 
 
-def _storage_lines(status: Status, paint: _Painter, detail: bool) -> list[_Line]:
+def _storage_lines(status: Status, paint: Painter, detail: bool) -> list[_Line]:
     mounts = list(status.storage) if detail else _shown_once_per_device(status.storage)
     lines: list[_Line] = []
     for mount in mounts:
-        pair = _size_pair(mount.used_bytes, mount.total_bytes)
+        pair = size_pair(mount.used_bytes, mount.total_bytes)
         lines.append(_Usage(mount.mount, mount.percent, pair))
         if detail:
-            about = (f"free {_size(mount.free_bytes)}", mount.device, mount.fstype)
-            lines.append(_Row("", paint.dim(_GAP.join(part for part in about if part))))
+            about = (f"free {human_size(mount.free_bytes)}", mount.device, mount.fstype)
+            lines.append(_Row("", paint.dim(GAP.join(part for part in about if part))))
     return lines or ["none found"]
 
 
-def _gpu_lines(gpu: GpuInfo, paint: _Painter, detail: bool) -> list[_Line]:
+def _gpu_lines(gpu: GpuInfo, paint: Painter, detail: bool) -> list[_Line]:
     lines: list[_Line] = [paint.strong(gpu.name)]
     if gpu.utilization_percent is not None:
         lines.append(_Usage("Usage", gpu.utilization_percent))
     used, total = gpu.memory_used_bytes, gpu.memory_total_bytes
     if total:
         if used is not None:
-            lines.append(_Usage("Memory", used * 100 / total, _size_pair(used, total)))
+            lines.append(_Usage("Memory", used * 100 / total, size_pair(used, total)))
         else:
-            lines.append(_Row("Memory", _size(total)))
+            lines.append(_Row("Memory", human_size(total)))
     if gpu.temperature_c is not None:
         lines.append(_Row("Temp", _temperature(gpu.temperature_c)))
     if detail:
@@ -328,7 +210,7 @@ def _gpu_lines(gpu: GpuInfo, paint: _Painter, detail: bool) -> list[_Line]:
     return lines
 
 
-def _all_gpu_lines(status: Status, paint: _Painter, detail: bool) -> list[_Line]:
+def _all_gpu_lines(status: Status, paint: Painter, detail: bool) -> list[_Line]:
     lines: list[_Line] = []
     for gpu in status.gpus:
         if lines:
@@ -337,12 +219,12 @@ def _all_gpu_lines(status: Status, paint: _Painter, detail: bool) -> list[_Line]
     return lines or ["none detected"]
 
 
-def _network_lines(status: Status, paint: _Painter) -> list[_Line]:
+def _network_lines(status: Status, paint: Painter) -> list[_Line]:
     table = [("State", "Sent", "Received")] + [
         (
             "up" if interface.is_up else "down",
-            _size(interface.bytes_sent),
-            _size(interface.bytes_received),
+            human_size(interface.bytes_sent),
+            human_size(interface.bytes_received),
         )
         for interface in status.network
     ]
@@ -350,7 +232,7 @@ def _network_lines(status: Status, paint: _Painter) -> list[_Line]:
 
     def cells(row: tuple[str, str, str], address: str) -> str:
         columns = (row[0].ljust(state), row[1].rjust(sent), row[2].rjust(received), address)
-        return _GAP.join(columns).rstrip()
+        return GAP.join(columns).rstrip()
 
     lines: list[_Line] = [_Row(paint.dim("Interface"), paint.dim(cells(table[0], "Address")))]
     for interface, row in zip(status.network, table[1:]):
@@ -370,9 +252,9 @@ def _temperature_lines(status: Status) -> list[_Line]:
 
     lines: list[_Line] = []
     for sensor, readings in by_sensor.items():
-        width = max(_columns(reading) for reading in readings)
-        per_row = max(1, (_FLOW_WIDTH + len(_GAP)) // (width + len(_GAP)))
-        lines += _flow(sensor, [_pad(reading, width) for reading in readings], per_row)
+        width = max(display_width(reading) for reading in readings)
+        per_row = max(1, (_FLOW_WIDTH + len(GAP)) // (width + len(GAP)))
+        lines += _flow(sensor, [pad(reading, width) for reading in readings], per_row)
     return lines
 
 
@@ -385,7 +267,7 @@ def _battery_lines(status: Status) -> list[_Line]:
     if battery.seconds_left is not None:
         hours, minutes = divmod(battery.seconds_left // 60, 60)
         facts.append(f"{hours}h {minutes}m left")
-    return [_Row("Charge", _GAP.join(facts))]
+    return [_Row("Charge", GAP.join(facts))]
 
 
 def render_status(
@@ -402,8 +284,8 @@ def render_status(
     plain characters for output that cannot show box-drawing ones. ``width``
     is the most columns a line may take; lines that need more are cut.
     """
-    glyphs = _ASCII if ascii else _UNICODE
-    paint = _Painter(color, glyphs)
+    glyphs = ASCII if ascii else UNICODE
+    paint = Painter(color, glyphs)
 
     sections: list[tuple[str, list[_Line]]] = [
         (status.host.hostname, _host_lines(status, paint, detail)),
@@ -422,7 +304,7 @@ def render_status(
     # One key column and one column of size pairs for the whole report, so
     # every bar and every figure lines up across sections.
     readings = [line for _, lines in sections for line in lines if not isinstance(line, str)]
-    key_width = min(_KEY_LIMIT, max(_columns(line.key) for line in readings))
+    key_width = min(_KEY_LIMIT, max(display_width(line.key) for line in readings))
     pair_width = max(
         (len(line.pair) for line in readings if isinstance(line, _Usage)), default=0
     )
@@ -430,67 +312,14 @@ def render_status(
     def text(line: _Line) -> str:
         if isinstance(line, str):
             return line
-        key = _pad(_cut_middle(line.key, key_width, glyphs.cut), key_width)
+        key = pad(_cut_middle(line.key, key_width, glyphs.cut), key_width)
         if isinstance(line, _Row):
-            return f"{key}{_GAP}{line.value}"
+            return f"{key}{GAP}{line.value}"
         pair = f"   {line.pair.rjust(pair_width)}" if line.pair else ""
-        return f"{key}{_GAP}{paint.usage(line.percent)}{pair}"
+        return f"{key}{GAP}{paint.usage(line.percent)}{pair}"
 
     drawn = [(title, [text(line) for line in lines]) for title, lines in sections]
-    inner = max(_columns(item) for title, rows in drawn for item in (title, *rows))
-    if width is not None:
-        inner = min(inner, max(width, _MINIMUM_WIDTH) - 6)
-
-    side = paint.dim(glyphs.vertical)
-    out: list[str] = []
-    for index, (title, rows) in enumerate(drawn):
-        title = _cut(title, inner, glyphs.cut)
-        left = glyphs.top_left if index == 0 else glyphs.divider_left
-        right = glyphs.top_right if index == 0 else glyphs.divider_right
-        rule = glyphs.horizontal * (inner + 1 - _columns(title))
-        out.append(
-            paint.dim(f"{left}{glyphs.horizontal} ")
-            + paint.strong(title)
-            + paint.dim(f" {rule}{right}")
-        )
-        out += [f"{side}  {_pad(_cut(row, inner, glyphs.cut), inner)}  {side}" for row in rows]
-    out.append(
-        paint.dim(f"{glyphs.bottom_left}{glyphs.horizontal * (inner + 4)}{glyphs.bottom_right}")
-    )
-    return "\n".join(out) + "\n"
-
-
-def _output_encoding() -> str:
-    return getattr(sys.stdout, "encoding", None) or "ascii"
-
-
-def _can_write(text: str) -> bool:
-    try:
-        text.encode(_output_encoding())
-    except (UnicodeEncodeError, LookupError):
-        return False
-    return True
-
-
-def _writable(text: str) -> str:
-    """Replace what the output encoding cannot represent, so printing never fails.
-
-    Each replacement takes the columns of what it replaces, so the frame
-    stays straight.
-    """
-    if _can_write(text):
-        return text
-
-    def stand_in(char: str) -> str:
-        if char == "°":
-            return " "
-        return "?" * _columns(char)
-
-    return "".join(char if _can_write(char) else stand_in(char) for char in text)
-
-
-def _use_color() -> bool:
-    return sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+    return draw_frame(drawn, paint, width)
 
 
 @app.command()
@@ -523,13 +352,13 @@ def status(live: bool, interval: float | None, detail: bool, as_json: bool) -> N
     sampler = StatusSampler()
     on_terminal = sys.stdout.isatty()
     in_place = live and not as_json and on_terminal
-    color = _use_color()
-    plain = not _can_write("".join(astuple(_UNICODE)))
+    color = use_color()
+    plain = needs_ascii()
 
     def text(reading: Status, *, fit_height: bool = False) -> str:
         # One column is left free: writing in the last one and then clearing
         # to the end of the line erases that character on some terminals.
-        size = shutil.get_terminal_size() if on_terminal else None
+        size = terminal_size()
         report = render_status(
             reading,
             detail=detail,
@@ -540,7 +369,7 @@ def status(live: bool, interval: float | None, detail: bool, as_json: bool) -> N
         if size and fit_height:
             # A report taller than the screen would scroll on every redraw.
             report = "".join(report.splitlines(keepends=True)[: max(1, size.lines - 1)])
-        return _writable(report)
+        return writable(report)
 
     reading = sampler.sample(_FIRST_WINDOW)
 
