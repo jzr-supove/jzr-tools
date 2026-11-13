@@ -9,6 +9,8 @@ import pkgutil
 import re
 import subprocess
 import sys
+import tempfile
+from unittest import mock
 import tomllib
 import unittest
 from pathlib import Path
@@ -16,7 +18,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = PROJECT_ROOT / "src"
 
-LAZY_NAMES = {"image", "text", "port", "killport", "host"}
+LAZY_NAMES = {"image", "text", "port", "killport", "host", "bind"}
 BOX_CHARS = ("╭", "│", "╰", "─")
 
 _RUNNER = """
@@ -32,9 +34,14 @@ print("@@MODULES@@" + ",".join(sorted(sys.modules)))
 """
 
 
+# Unknown command names consult the bindings file, so no test may see the real one.
+_CONFIG_DIR = tempfile.TemporaryDirectory(prefix="jzr-startup-config-")
+
+
 def _env() -> dict[str, str]:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC_PATH)
+    env["JZR_CONFIG_DIR"] = _CONFIG_DIR.name
     env["PYTHONIOENCODING"] = "utf-8"
     return env
 
@@ -347,7 +354,12 @@ class RegistryTests(unittest.TestCase):
 
     def test_get_command_unknown_returns_none(self) -> None:
         ctx = self.click.Context(self.app)
-        self.assertIsNone(self.app.get_command(ctx, "nope"))
+        # An unknown name is looked up among the user's bindings; keep that
+        # away from the real file.
+        with tempfile.TemporaryDirectory() as folder, mock.patch.dict(
+            os.environ, {"JZR_CONFIG_DIR": folder}
+        ):
+            self.assertIsNone(self.app.get_command(ctx, "nope"))
 
     def test_lazy_commands_point_at_the_new_modules(self) -> None:
         paths = {name: value[0] for name, value in self._lazy().items()}
@@ -359,6 +371,7 @@ class RegistryTests(unittest.TestCase):
                 "port": "jzr_tools.commands.network:app",
                 "killport": "jzr_tools.commands.network:killport",
                 "host": "jzr_tools.commands.host:app",
+                "bind": "jzr_tools.commands.bind:app",
             },
         )
 
@@ -397,6 +410,72 @@ class ShortHelpFlagTests(_ObservedTestCase):
                 obs = self.run_cli(*args)
                 self.assert_ok(obs)
                 self.assertIn("Usage:", obs.stdout)
+
+
+BINDING_MODULES = ["jzr_tools.core.bindings", "jzr_tools.commands.bind"]
+
+
+class BindStartupTests(_ObservedTestCase):
+    def test_registry_entry_points_at_bind_app_with_design_help(self) -> None:
+        sys.path.insert(0, str(SRC_PATH))
+        try:
+            cli = importlib.import_module("jzr_tools.cli")
+        finally:
+            sys.path.remove(str(SRC_PATH))
+        self.assertEqual(
+            cli.app.lazy_commands["bind"],
+            (
+                "jzr_tools.commands.bind:app",
+                "Save your own shortcuts for long commands.",
+            ),
+        )
+
+    def test_root_help_lists_bind_with_its_help(self) -> None:
+        obs = self.run_cli("-h")
+        self.assert_ok(obs)
+        self.assertRegex(
+            obs.stdout,
+            r"(?m)^  bind\s+Save your own shortcuts for long commands\.",
+        )
+
+    def test_calls_that_are_not_bind_never_load_the_bindings_code(self) -> None:
+        cases = [
+            ["--version"],
+            ["-h"],
+            ["version"],
+            ["text", "slug", "Hello World"],
+            ["host", "status", "--json"],
+        ]
+        for args in cases:
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, BINDING_MODULES)
+
+    def test_unknown_name_consults_bindings_but_still_says_no_such_command(self) -> None:
+        obs = self.run_cli("texxt", "slug")
+        self.assertEqual(obs.exit_code, "2", obs.describe())
+        self.assertIn("No such command", obs.stderr)
+
+    def test_bind_help_and_every_subcommand_help_exit_zero(self) -> None:
+        for args in (
+            ["bind", "-h"],
+            ["bind", "add", "-h"],
+            ["bind", "list", "-h"],
+            ["bind", "remove", "-h"],
+            ["bind", "run", "-h"],
+            ["bind", "path", "-h"],
+        ):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
+
+    def test_bind_help_lists_its_five_subcommands(self) -> None:
+        obs = self.run_cli("bind", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertEqual(sorted(listed), ["add", "list", "path", "remove", "run"])
 
 
 class PlainErrorOutputTests(_ObservedTestCase):

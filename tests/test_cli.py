@@ -55,7 +55,7 @@ class CliTests(unittest.TestCase):
             r"^  (\S+)", result.stdout.split("Commands:", 1)[1], flags=re.MULTILINE
         )
         self.assertEqual(
-            sorted(listed), ["host", "image", "killport", "port", "text", "version"]
+            sorted(listed), ["bind", "host", "image", "killport", "port", "text", "version"]
         )
 
     def test_host_help_lists_status_clean_and_procs(self) -> None:
@@ -76,7 +76,11 @@ class CliTests(unittest.TestCase):
     def test_removed_root_commands_are_unknown(self) -> None:
         for name in ("convert", "png2jpg", "fs", "system"):
             with self.subTest(name=name):
-                result = runner.invoke(app, [name, "--help"])
+                # Unknown names consult the bindings file: keep it off the real one.
+                with tempfile.TemporaryDirectory() as config:
+                    result = runner.invoke(
+                        app, [name, "--help"], env={"JZR_CONFIG_DIR": config}
+                    )
 
                 self.assertEqual(result.exit_code, 2)
                 self.assertIn("No such command", combined_output(result))

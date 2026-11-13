@@ -24,6 +24,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "text": ("jzr_tools.commands.text:app", "Text utilities."),
     "port": ("jzr_tools.commands.network:app", "Inspect and free local ports."),
     "host": ("jzr_tools.commands.host:app", "Inspect and clean up this machine."),
+    "bind": ("jzr_tools.commands.bind:app", "Save your own shortcuts for long commands."),
     # The one shortcut: the same command as `jzr port kill`.
     "killport": (
         "jzr_tools.commands.network:killport",
@@ -39,20 +40,31 @@ class LazyGroup(click.Group):
         self,
         *args: object,
         lazy_commands: dict[str, tuple[str, str]] | None = None,
+        fallback: str | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.lazy_commands = dict(lazy_commands or {})
+        # "package.module:function" asked for names this group does not know;
+        # it returns a command or None. Imported only when that happens.
+        self.fallback = fallback
 
     def list_commands(self, ctx: click.Context) -> list[str]:
         return [*self.commands, *self.lazy_commands]
 
     def get_command(self, ctx: click.Context, name: str) -> click.Command | None:
         entry = self.lazy_commands.get(name)
-        if entry is None:
-            return super().get_command(ctx, name)
+        if entry is not None:
+            return self._load(entry[0])
 
-        module_name, _, attribute = entry[0].partition(":")
+        command = super().get_command(ctx, name)
+        if command is None and self.fallback is not None:
+            command = self._load(self.fallback)(name)
+        return command
+
+    @staticmethod
+    def _load(path: str) -> object:
+        module_name, _, attribute = path.partition(":")
         return getattr(importlib.import_module(module_name), attribute)
 
     def format_commands(self, ctx: click.Context, formatter: click.HelpFormatter) -> None:
@@ -74,6 +86,8 @@ class LazyGroup(click.Group):
 @click.group(
     cls=LazyGroup,
     lazy_commands=_COMMANDS,
+    # A name that is not a command may be one of the user's own shortcuts.
+    fallback="jzr_tools.commands.bind:command_for",
     context_settings={"help_option_names": ["-h", "--help"]},
 )
 @click.version_option(

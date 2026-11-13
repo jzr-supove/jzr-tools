@@ -53,6 +53,9 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr host status` | Show host, CPU, memory, storage and GPU status |
 | `jzr host clean` | Find caches and other disposable data, and remove what you pick |
 | `jzr host procs` | Show what uses the most memory; optionally end what you pick |
+| `jzr bind add` | Save a long command under a short name, run as `jzr <name>` |
+| `jzr bind list` | List your shortcuts |
+| `jzr bind remove` | Remove shortcuts |
 | `jzr version` | Print the installed toolkit version |
 
 ## Image Conversion
@@ -375,6 +378,56 @@ Behavior worth knowing:
 - Exit code `1` means a process could not be ended or is still running.
 
 Works wherever `psutil` does; only Linux has been tried.
+
+## Bind
+
+Save a long command under a short name, then run it as `jzr <name>`:
+
+```bash
+jzr bind add tunnel ngrok http 5173 --url https://example.ngrok-free.dev
+jzr tunnel                     # runs the command
+jzr tunnel --log stdout        # anything after the name is added to it
+jzr bind list
+jzr bind remove tunnel
+```
+
+The command can also be given as one quoted string; both forms store the same
+thing:
+
+```bash
+jzr bind add tunnel "ngrok http 5173 --url https://example.ngrok-free.dev"
+```
+
+Other commands: `jzr bind add --force NAME ...` replaces an existing shortcut,
+`jzr bind run NAME` is the long way to run one, `jzr bind path` prints where
+they are stored, and `jzr bind list --json` is for scripts.
+
+Behavior worth knowing:
+
+- The command runs directly, without a shell, so it behaves the same on
+  Linux, macOS and Windows. The price: no pipes, `&&`, `$VARIABLES` or `~`.
+  One shortcut is one command.
+- Everything after the name belongs to the command, including `--options`,
+  both when binding and when running. `--force` therefore goes before the
+  name, and `jzr tunnel --help` shows ngrok's help, not jzr's.
+- Built-in commands always win. `jzr bind add host ...` is refused, and if a
+  later version of jzr adds a command with the name of one of your
+  shortcuts, `jzr bind list` marks it and `jzr bind run NAME` still reaches
+  it.
+- Names start with a letter or digit and may contain letters, digits, `.`,
+  `_` and `-`.
+- The exit code is the command's own. Ctrl+C goes to the command, and jzr
+  waits for it to finish. A program that is not installed gives exit `127`.
+- Shortcuts live in `bindings.json` in jzr's config folder: `~/.config/jzr`
+  (or `$XDG_CONFIG_HOME/jzr`), `%APPDATA%\jzr` on Windows, or wherever
+  `JZR_CONFIG_DIR` points. It is plain JSON that you can edit or copy to
+  another machine. It is only readable by you, but anything in it, tokens
+  included, is stored as plain text.
+- A bindings file that is damaged is reported and never overwritten.
+- `jzr -h` does not list your shortcuts; `jzr bind list` does.
+
+Tried on Linux only. The Windows location, `.cmd`/`.bat` programs and
+splitting a quoted command that contains Windows paths are untested.
 
 ## Text
 
