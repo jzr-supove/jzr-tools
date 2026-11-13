@@ -279,13 +279,26 @@ jzr host clean --json             # the scan, for scripts; removes nothing
 ? Remove 3 items, about 59.6 GiB? (y/N)
 ```
 
-What it looks for (Linux for now):
+What it looks for on Linux:
 
 | Tier | Items | Ticked by default |
 |------|-------|-------------------|
 | Safe to remove | Docker build cache; uv, pip, npm, Cargo, Yarn, pnpm, Go build, node-gyp, Mesa shader and thumbnail caches | yes |
 | Review first | Trash; stopped Docker containers; Docker images no container uses; any other folder of 100 MiB or more in `~/.cache` (listed as `cache:<name>`) | no |
 | Needs root | systemd journal beyond the newest 500 MiB; the dnf or apt package cache | no |
+
+And on Windows, mostly under `%LOCALAPPDATA%`:
+
+| Tier | Items | Ticked by default |
+|------|-------|-------------------|
+| Safe to remove | Docker build cache; uv, pip, npm, Cargo, Yarn, pnpm, Go build and node-gyp caches; the graphics drivers' shader caches (NVIDIA, AMD, Intel, Direct3D) | yes |
+| Review first | Temp files (`%TEMP%`, `SquirrelTemp`); crash dumps; the Recycle Bin; Docker containers and images; other large folders in `~/.cache` | no |
+| Needs administrator | `C:\Windows\Temp`; Windows Update downloads | no |
+
+The ids for `--only` are the same everywhere (`jzr host clean --only x` with an
+id the other system has prints `x: nothing to remove`). `GOCACHE`,
+`YARN_CACHE_FOLDER`, `UV_CACHE_DIR`, `PIP_CACHE_DIR`, `npm_config_cache` and
+`CARGO_HOME` move a cache on either system.
 
 Behavior worth knowing:
 
@@ -300,20 +313,34 @@ Behavior worth knowing:
   folder is emptied and kept. `--dry-run` shows which.
 - Root items run through `sudo`, which asks for your password itself. With
   `--yes` they run as `sudo -n` and fail instead of asking.
+- On Windows, administrator items are offered in an elevated terminal, or
+  when Windows sudo is turned on; then jzr runs itself through `sudo` for
+  them and measures again afterwards. With `--yes` and no elevation they fail
+  instead of raising a prompt nobody answers. `C:\Windows\Temp` cannot be
+  read without elevation, so it shows up only in an elevated terminal.
+- On Windows, files a program still has open cannot be deleted; they are left
+  in place and counted (`Temp files: removed 8.0 GiB; 31 files in use were
+  kept`), and the item still counts as cleaned. Read-only files are removed.
+- The Recycle Bin is sized and emptied through the Windows shell, on every
+  drive at once.
 - Sizes are estimates. The uv cache shares files with your environments, so
   less may come back than shown; the last line reports the free space before
   and after.
-- Symbolic links are never followed, and a link inside `~/.cache` is never
-  offered as a cache.
+- Symbolic links (and Windows junctions) are never followed, and a link
+  inside `~/.cache` is never offered as a cache.
+- On Windows a hard-linked file counts once per link: Windows does not report
+  link counts while listing a folder, and asking per file made sizing the uv
+  cache ten times slower.
 - A scan of a large cache takes a while (about 25 seconds here for 68 GiB).
 - Without a terminal it refuses to guess: pass `--dry-run`, `--json` or
   `--yes`.
 - Exit code `1` means something could not be removed (the rest still was) or
   the list was cancelled.
 
-Removal has been run against a throwaway home directory only; the Docker,
-`sudo`, journal, dnf and apt commands are covered by tests with the commands
-faked and have not been run for real.
+Removal has been run against throwaway folders only, on Linux and Windows;
+the Docker, `sudo`, journal, dnf and apt commands, the Recycle Bin and
+Windows sudo are covered by tests with them faked and have not been run for
+real. The Windows scan has been run on a real machine.
 
 ## Host procs
 

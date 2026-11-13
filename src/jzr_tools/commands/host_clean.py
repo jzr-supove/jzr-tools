@@ -21,6 +21,11 @@ _HEADINGS = {
     "review": "Review first",
     "root": "Needs root",
 }
+_WINDOWS_HEADINGS = {**_HEADINGS, "root": "Needs administrator"}
+
+
+def _headings() -> dict[str, str]:
+    return _WINDOWS_HEADINGS if cleanup._windows() else _HEADINGS
 _ERASE_LINE = "\r\x1b[K"
 
 
@@ -79,7 +84,7 @@ def _report(items: list[Item], selected: list[Item]) -> list[str]:
     id_width = max(len(item.id) for item in items)
     size_width = max(len(human_size(item.size_bytes)) for item in items)
     lines = []
-    for tier, heading in _HEADINGS.items():
+    for tier, heading in _headings().items():
         rows = [item for item in items if item.tier == tier]
         if not rows:
             continue
@@ -98,7 +103,7 @@ def _pick(items: list[Item]) -> list[Item] | None:
     title_width = max(len(item.title) for item in items)
     size_width = max(len(human_size(item.size_bytes)) for item in items)
     entries: list[prompts.Choice | prompts.Heading] = []
-    for tier, heading in _HEADINGS.items():
+    for tier, heading in _headings().items():
         rows = [item for item in items if item.tier == tier]
         if rows:
             entries.append(prompts.Heading(heading))
@@ -230,7 +235,11 @@ def clean(dry_run: bool, yes: bool, only: tuple[str, ...], as_json: bool) -> Non
             outcome = cleanup.clean(item, ask_password=not yes)
         freed += outcome.freed_bytes
         if outcome.ok:
-            click.echo(f"{item.title}: removed {human_size(outcome.freed_bytes)}")
+            line = f"{item.title}: removed {human_size(outcome.freed_bytes)}"
+            if outcome.in_use:
+                files = "1 file in use was" if outcome.in_use == 1 else f"{outcome.in_use} files in use were"
+                line += f"; {files} kept"
+            click.echo(line)
         else:
             failed = True
             click.echo(f"{item.title}: failed: {outcome.error}", err=True)

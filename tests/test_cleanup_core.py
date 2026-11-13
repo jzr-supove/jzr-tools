@@ -21,6 +21,18 @@ from jzr_tools.core import cleanup
 MIB = 1024**2
 GIB = 1024**3
 
+# These tests describe the Linux items and rules. The Windows ones are in
+# test_cleanup_windows, whose tests patch the platform themselves.
+_linux_rules = mock.patch("jzr_tools.core.cleanup._windows", return_value=False)
+
+
+def setUpModule() -> None:  # noqa: N802
+    _linux_rules.start()
+
+
+def tearDownModule() -> None:  # noqa: N802
+    _linux_rules.stop()
+
 MINIMUM = 200_000
 MINIMUM_OTHER = 400_000
 SMALL = 20_000  # below both minimums
@@ -43,6 +55,17 @@ def write(path: Path, size: int) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(os.urandom(size))
     return path
+
+
+def make_shallow_directory(case: unittest.TestCase) -> Path:
+    """Create a throwaway directory next to the filesystem root, removed afterwards.
+
+    /tmp/xxxx on POSIX, X:\\xxxx (the drive of the temp directory) on Windows.
+    """
+    parent = Path(tempfile.gettempdir()).anchor if os.name == "nt" else "/tmp"
+    shallow = Path(tempfile.mkdtemp(dir=parent)).resolve()
+    case.addCleanup(shutil.rmtree, shallow, True)
+    return shallow
 
 
 class CleanupCase(unittest.TestCase):
@@ -113,6 +136,8 @@ class ModuleSurfaceTests(unittest.TestCase):
                 "docker-build-cache", "uv", "pip", "npm", "cargo", "thumbnails",
                 "go-build", "yarn", "pnpm", "node-gyp", "mesa-shaders", "trash",
                 "docker-containers", "docker-images", "journal", "dnf", "apt",
+                # Windows items: --only is the same on every system (spec, host clean)
+                "gpu-shaders", "temp", "crash-dumps", "windows-temp", "windows-update",
             },
         )
         self.assertEqual(len(cleanup.KNOWN_IDS), len(set(cleanup.KNOWN_IDS)))
@@ -135,9 +160,10 @@ class ModuleSurfaceTests(unittest.TestCase):
         self.assertEqual(item.action, "docker builder prune --all --force")
 
     def test_item_action_lists_the_paths_for_directory_items(self) -> None:
-        item = cleanup.Item("trash", "Trash", "review", 5, "n", paths=(Path("/a/b/c"), Path("/a/b/d")))
-        self.assertIn("/a/b/c", item.action)
-        self.assertIn("/a/b/d", item.action)
+        first, second = Path("a") / "b" / "c", Path("a") / "b" / "d"
+        item = cleanup.Item("trash", "Trash", "review", 5, "n", paths=(first, second))
+        self.assertIn(str(first), item.action)
+        self.assertIn(str(second), item.action)
         self.assertIn(",", item.action)
 
     def test_command_wins_over_paths_in_the_action(self) -> None:
@@ -605,6 +631,11 @@ class DirectorySizeTests(CleanupCase):
         directory.mkdir()
         self.assertLess(cleanup.directory_size(directory), 16_384)
 
+    @unittest.skipIf(
+        os.name == "nt",
+        "hard links are not de-duplicated on Windows: scandir reports no link counts there "
+        "and an lstat per file made sizing the uv cache 10x slower (spec, Sizes)",
+    )
     def test_hard_links_are_counted_once(self) -> None:
         directory = self.root / "d"
         original = write(directory / "a" / "orig.bin", 100_000)
@@ -638,6 +669,24 @@ class DirectorySizeTests(CleanupCase):
         (self.home / ".cache" / "Linked").symlink_to(outside, target_is_directory=True)
         self.assertNotIn("cache:Linked", self.scan())
 
+    def test_unreadable_subdirectory_does_not_raise_even_when_scandir_refuses_it(self) -> None:
+        directory = self.root / "d"
+        write(directory / "ok.bin", 100_000)
+        locked = directory / "locked"
+        write(locked / "x.bin", 100_000)
+        real_scandir = os.scandir
+
+        def scandir(path: object = "."):
+            if os.fspath(path) == str(locked):  # type: ignore[arg-type]
+                raise PermissionError(13, "Access is denied", str(locked))
+            return real_scandir(path)  # type: ignore[arg-type]
+
+        with mock.patch.object(cleanup.os, "scandir", side_effect=scandir):
+            size = cleanup.directory_size(directory)
+        self.assertGreaterEqual(size, 100_000)
+        self.assertLess(size, 100_000 + SLACK)  # the locked file is left out
+
+    @unittest.skipIf(os.name == "nt", "chmod 0 does not make a directory unreadable on Windows")
     def test_unreadable_subdirectory_does_not_raise(self) -> None:
         if os.geteuid() == 0:
             self.skipTest("root can read everything")
@@ -682,6 +731,27 @@ class EmptyDirectoryTests(CleanupCase):
         self.assertEqual(list(target.iterdir()), [])
         self.assertTrue(keep.exists())
 
+    def test_a_failing_entry_is_reported_and_the_rest_is_still_removed_with_a_faked_error(self) -> None:
+        target = self.home / ".cache" / "pip"
+        write(target / "a.bin", 1_000)
+        write(target / "m.bin", 1_000)
+        write(target / "z.bin", 1_000)
+        real_unlink = os.unlink
+
+        def unlink(path: object, *args: object, **kwargs: object) -> None:
+            if os.fspath(path).endswith("m.bin"):  # type: ignore[arg-type]
+                raise PermissionError(13, "Permission denied", os.fspath(path))  # type: ignore[arg-type]
+            real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+
+        with mock.patch.object(cleanup.os, "unlink", side_effect=unlink):
+            errors = cleanup.empty_directory(target, home=self.home)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("m.bin", errors[0])
+        self.assertFalse((target / "a.bin").exists())
+        self.assertFalse((target / "z.bin").exists())
+        self.assertTrue((target / "m.bin").exists())
+
+    @unittest.skipIf(os.name == "nt", "chmod 0o500 does not stop deleting inside a directory on Windows")
     def test_a_failing_entry_is_reported_and_the_rest_is_still_removed(self) -> None:
         if os.geteuid() == 0:
             self.skipTest("root ignores permissions")
@@ -729,22 +799,23 @@ class EmptyDirectoryTests(CleanupCase):
         for deleter in (rmtree, unlink, remove, rmdir, path_unlink, path_rmdir):
             deleter.assert_not_called()
 
-    def test_refuses_paths_fewer_than_three_levels_deep(self) -> None:
+    def shallow_directory(self) -> Path:
         try:
-            shallow = Path(tempfile.mkdtemp(dir="/tmp")).resolve()  # /tmp/xxxx: two levels
-        except OSError:
-            self.skipTest("/tmp is not writable")
-        self.addCleanup(shutil.rmtree, shallow, True)
+            return make_shallow_directory(self)
+        except OSError as exc:
+            self.skipTest(f"cannot create a directory next to the filesystem root: {exc}")
+
+    def test_refuses_paths_fewer_than_four_parts_deep(self) -> None:
+        shallow = self.shallow_directory()
+        self.assertLess(len(shallow.parts), 4)
         sentinel = write(shallow / "keep.txt", 100)
         self.assert_refused(shallow, sentinel)
 
-    def test_accepts_a_directory_exactly_three_levels_deep(self) -> None:
-        try:
-            base = Path(tempfile.mkdtemp(dir="/tmp")).resolve()
-        except OSError:
-            self.skipTest("/tmp is not writable")
-        self.addCleanup(shutil.rmtree, base, True)
-        target = base / "cache"
+    def test_accepts_a_directory_exactly_four_parts_deep(self) -> None:
+        target = self.shallow_directory()
+        while len(target.parts) < 4:  # the root counts as the first part
+            target /= "cache"
+        self.assertEqual(len(target.parts), 4)
         write(target / "x.bin", 100)
         self.assertEqual(cleanup.empty_directory(target, home=self.home), [])
         self.assertEqual(list(target.iterdir()), [])
@@ -825,8 +896,10 @@ class CleanPathItemTests(CleanupCase):
 
     def test_one_refused_directory_fails_the_item_but_the_other_is_still_emptied(self) -> None:
         good = self.cache("pip", size=MEDIUM)
-        shallow = Path(tempfile.mkdtemp(dir="/tmp")).resolve()
-        self.addCleanup(shutil.rmtree, shallow, True)
+        try:
+            shallow = make_shallow_directory(self)
+        except OSError as exc:
+            self.skipTest(f"cannot create a directory next to the filesystem root: {exc}")
         keep = write(shallow / "keep.txt", 10)
         item = cleanup.Item("x", "x", "safe", 1, "n", paths=(shallow, good))
         outcome = cleanup.clean(item)

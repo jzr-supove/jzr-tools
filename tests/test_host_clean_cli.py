@@ -27,6 +27,22 @@ GIB = 1024**3
 IS_INTERACTIVE = "jzr_tools.commands.host_clean._is_interactive"
 LINE = re.compile(r"^\s*\[(?P<mark>[x ])\]\s+(?P<id>\S+)\s+(?P<size>\d+(?:\.\d)? \w+)\s+(?P<title>.*?)\s*$")
 
+# These tests pin the Linux report (the "Needs root" heading, plain command
+# lines). The Windows report is pinned in test_host_clean_windows_cli, whose
+# tests patch the platform themselves.
+_linux_report = mock.patch("jzr_tools.core.cleanup._windows", return_value=False)
+
+
+def setUpModule() -> None:  # noqa: N802
+    _linux_report.start()
+
+
+def tearDownModule() -> None:  # noqa: N802
+    _linux_report.stop()
+
+
+CACHE_ROOT = Path("home") / "someone" / ".cache"  # str() differs per platform
+
 
 def make_item(
     item_id: str,
@@ -39,7 +55,7 @@ def make_item(
     paths: tuple[Path, ...] = (),
 ) -> cleanup.Item:
     if not command and not paths:
-        paths = (Path("/home/someone/.cache") / item_id,)
+        paths = (CACHE_ROOT / item_id,)
     return cleanup.Item(
         item_id, title or f"Title of {item_id}", tier, size, note or f"Note of {item_id}",
         paths=paths, command=command,
@@ -465,7 +481,7 @@ class DryRunTests(CleanCase):
         would = [l for l in out.splitlines() if l.startswith(("would run: ", "would empty: "))]
         self.assertEqual(len(would), 2)
         self.assertIn("would run: docker builder prune --all --force", would)
-        self.assertTrue(any(l.startswith("would empty: ") and "/home/someone/.cache/pip" in l for l in would))
+        self.assertTrue(any(l.startswith("would empty: ") and str(CACHE_ROOT / "pip") in l for l in would))
 
     def test_only_selected_items_get_a_would_line(self) -> None:
         out = self.invoke("--dry-run", "--only", "journal").stdout
@@ -475,11 +491,12 @@ class DryRunTests(CleanCase):
         self.assertNotIn("docker", would[0])
 
     def test_directory_items_list_every_path(self) -> None:
-        item = make_item("trash", 2 * GIB, "review", paths=(Path("/h/u/share/Trash/files"), Path("/h/u/share/Trash/info")))
+        files, info = Path("h") / "u" / "Trash" / "files", Path("h") / "u" / "Trash" / "info"
+        item = make_item("trash", 2 * GIB, "review", paths=(files, info))
         out = self.invoke("--dry-run", "--only", "trash", items=[item]).stdout
         line = next(l for l in out.splitlines() if l.startswith("would empty: "))
-        self.assertIn("/h/u/share/Trash/files", line)
-        self.assertIn("/h/u/share/Trash/info", line)
+        self.assertIn(str(files), line)
+        self.assertIn(str(info), line)
 
     def test_last_line_says_nothing_was_removed(self) -> None:
         out = self.invoke("--dry-run").stdout
@@ -527,7 +544,7 @@ class JsonTests(CleanCase):
         self.assertEqual(build["size_bytes"], 3 * GIB)
         self.assertEqual(build["note"], "Note of docker-build-cache")
         self.assertEqual(build["action"], "docker builder prune --all --force")
-        self.assertIn("/home/someone/.cache/pip", by_id["pip"]["action"])
+        self.assertIn(str(CACHE_ROOT / "pip"), by_id["pip"]["action"])
 
     def test_selected_follows_the_safe_tier_by_default(self) -> None:
         doc = self.document()
