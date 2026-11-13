@@ -467,8 +467,20 @@ Behavior worth knowing:
 - A bindings file that is damaged is reported and never overwritten.
 - `jzr -h` does not list your shortcuts; `jzr bind list` does.
 
-Tried on Linux only. The Windows location, `.cmd`/`.bat` programs and
-splitting a quoted command that contains Windows paths are untested.
+On Windows:
+
+- What you type reaches the command as typed: `$HOME`, `%PATH%`, `~` and
+  `*.txt` are not expanded by jzr (other jzr commands do expand wildcards,
+  since cmd and PowerShell leave that to the program).
+- One quoted string is split by Windows rules: double quotes group words and
+  backslashes in paths are kept; single quotes are ordinary characters.
+  `jzr bind list` writes commands back the same way.
+- Programs that are `.cmd` or `.bat` files, such as `npm`, `pnpm` and `yarn`,
+  have to run through cmd.exe. jzr quotes every argument so `&`, `|`, `<` and
+  `>` stay literal, and refuses to run one with `%`, `"`, `!` or a line
+  break in it, which cmd.exe would act on whatever the quoting.
+
+Tried on Linux and Windows 11.
 
 ## Text
 

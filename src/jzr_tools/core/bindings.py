@@ -22,6 +22,11 @@ _VERSION = 1
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
+def _windows() -> bool:
+    """Return whether this is Windows; asked at run time so tests can fake it."""
+    return sys.platform == "win32"
+
+
 class BindingError(Exception):
     """Something about a binding went wrong; the text is meant for the user."""
 
@@ -123,22 +128,91 @@ def split_command(parts: Sequence[str]) -> list[str]:
     if len(parts) != 1:
         return list(parts)
     try:
-        if os.name == "nt":
-            # Windows paths are full of backslashes, which the POSIX rules
-            # would swallow; keep them and only drop the quotes around words.
-            words = shlex.split(parts[0], posix=False)
-            return [
-                word[1:-1] if len(word) > 1 and word[0] == word[-1] and word[0] in "\"'" else word
-                for word in words
-            ]
+        if _windows():
+            return _split_windows(parts[0])
         return shlex.split(parts[0])
     except ValueError as exc:
         raise BindingError(f"The command could not be split into words: {exc}.") from exc
 
 
+def _split_windows(line: str) -> list[str]:
+    """Split a command line by the rules Windows programs read their own with.
+
+    Double quotes group words, a backslash is literal unless backslashes run
+    up to a double quote, where each pair is one backslash and an odd one
+    out makes the quote literal. Paths keep their backslashes, and this reads
+    back what ``describe`` writes.
+    """
+    words: list[str] = []
+    word: list[str] = []
+    started = quoted = False
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if char == "\\":
+            end = index
+            while end < len(line) and line[end] == "\\":
+                end += 1
+            run = end - index
+            if end < len(line) and line[end] == '"':
+                word.append("\\" * (run // 2))
+                if run % 2:
+                    word.append('"')
+                    end += 1
+            else:
+                word.append("\\" * run)
+            started, index = True, end
+            continue
+        if char == '"':
+            quoted, started = not quoted, True
+        elif char in " \t\n\r" and not quoted:
+            if started:
+                words.append("".join(word))
+                word, started = [], False
+        else:
+            word.append(char)
+            started = True
+        index += 1
+    if quoted:
+        raise ValueError("No closing quotation")
+    if started:
+        words.append("".join(word))
+    return words
+
+
 def describe(arguments: Sequence[str]) -> str:
     """Write a command as one line, quoted so that it reads back the same."""
+    if _windows():
+        return subprocess.list2cmdline(arguments)
     return shlex.join(arguments)
+
+
+# cmd.exe reads these even inside double quotes, so no quoting passes them on.
+_BATCH_UNSAFE = ("%", '"', "!", "\r", "\n")
+
+
+def _batch_command_line(program: str, arguments: Sequence[str]) -> str:
+    """Build the cmd.exe line that runs a batch file with literal arguments.
+
+    Windows starts a ``.cmd`` or ``.bat`` file through cmd.exe, which would
+    read ``&``, ``|``, ``<`` and ``>`` in the arguments as its own operators.
+    Inside double quotes they are plain text; the few characters that cmd.exe
+    still acts on there are refused.
+    """
+    for argument in arguments:
+        unsafe = [char for char in _BATCH_UNSAFE if char in argument]
+        if unsafe:
+            shown = ", ".join(repr(char) for char in unsafe)
+            raise BindingError(
+                f"{argument!r} cannot be passed to the batch file "
+                f"{os.path.basename(program)}: cmd.exe would act on {shown} in it."
+            )
+    shell = os.environ.get("COMSPEC") or "cmd.exe"
+    if " " in shell:
+        shell = f'"{shell}"'
+    inner = " ".join(f'"{word}"' for word in (program, *arguments))
+    # /d skips AutoRun commands; /s keeps the outer quotes from being reread.
+    return f'{shell} /d /s /c "{inner}"'
 
 
 def run(arguments: Sequence[str]) -> int:
@@ -146,11 +220,14 @@ def run(arguments: Sequence[str]) -> int:
     program = shutil.which(arguments[0])
     if program is None:
         raise ProgramNotFound(f"'{arguments[0]}' was not found on PATH.")
+    command: str | list[str] = [program, *arguments[1:]]
+    if _windows() and program.lower().endswith((".cmd", ".bat")):
+        command = _batch_command_line(program, arguments[1:])
     # Whatever jzr has printed must come out before the program's own output.
     sys.stdout.flush()
     sys.stderr.flush()
     try:
-        process = subprocess.Popen([program, *arguments[1:]])
+        process = subprocess.Popen(command)
     except OSError as exc:
         raise BindingError(f"'{arguments[0]}' could not be started: {exc.strerror or exc}.") from exc
     while True:

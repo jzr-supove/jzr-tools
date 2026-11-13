@@ -258,14 +258,19 @@ class SplitCommandTests(unittest.TestCase):
     def test_several_parts_are_returned_as_a_list(self) -> None:
         self.assertEqual(_bindings().split_command(("a", "b")), ["a", "b"])
 
-    @unittest.skipUnless(POSIX, "shell-style splitting; Windows splits differently")
     def test_one_part_is_split_like_a_shell_would(self) -> None:
         self.assertEqual(
             _bindings().split_command(["ngrok http 5173 --url https://example.dev"]),
             ["ngrok", "http", "5173", "--url", "https://example.dev"],
         )
 
-    @unittest.skipUnless(POSIX, "shell-style splitting; Windows splits differently")
+    def test_double_quotes_group_words_in_a_single_part_on_every_system(self) -> None:
+        self.assertEqual(
+            _bindings().split_command(['git commit -m "two words" "and more"']),
+            ["git", "commit", "-m", "two words", "and more"],
+        )
+
+    @unittest.skipUnless(POSIX, "single quotes are quotes only for POSIX shells; see test_bind_windows")
     def test_quotes_group_words_in_a_single_part(self) -> None:
         self.assertEqual(
             _bindings().split_command(["git commit -m 'two words' \"and more\""]),
@@ -277,7 +282,10 @@ class SplitCommandTests(unittest.TestCase):
 
     def test_unbalanced_quotes_raise_binding_error(self) -> None:
         b = _bindings()
-        for text in ("echo 'oops", 'echo "oops'):
+        # Windows command lines group words with double quotes only; a single
+        # quote there is an ordinary character.
+        texts = ("echo 'oops", 'echo "oops') if os.name == "posix" else ('echo "oops',)
+        for text in texts:
             with self.subTest(text=text):
                 with self.assertRaises(b.BindingError):
                     b.split_command([text])

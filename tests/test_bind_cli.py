@@ -39,6 +39,9 @@ EMPTY_LIST_MESSAGE = "No bindings yet. Add one with: jzr bind add NAME COMMAND..
 
 ARGV_PRINTER = "import sys; print(sys.argv[1:]); sys.exit(3)"
 
+# `describe` quotes the way the platform's own shell does (docs/features/windows-host-bind).
+QUOTED_HELLO_WORLD = '"hello world"' if os.name == "nt" else "'hello world'"
+
 
 class BindTestCase(unittest.TestCase):
     def setUp(self) -> None:
@@ -96,7 +99,6 @@ class AddTests(BindTestCase):
             result.stdout.strip(), "Bound tunnel: ngrok http 5173 --url https://example.dev"
         )
 
-    @unittest.skipUnless(POSIX, "shell-style splitting; Windows splits differently")
     def test_one_quoted_argument_stores_the_same_list(self) -> None:
         result = self.jzr("bind", "add", "tunnel", "ngrok http 5173 --url https://example.dev")
 
@@ -118,7 +120,8 @@ class AddTests(BindTestCase):
 
         self.assertEqual(result.exit_code, 0, result.stderr)
         self.assertEqual(self.stored()["greet"], ["echo", "hello world", "x y"])
-        self.assertIn("Bound greet: echo 'hello world' 'x y'", result.stdout)
+        quoted_xy = '"x y"' if os.name == "nt" else "'x y'"
+        self.assertIn(f"Bound greet: echo {QUOTED_HELLO_WORLD} {quoted_xy}", result.stdout)
 
     def test_options_inside_the_command_are_not_read_by_jzr(self) -> None:
         result = self.jzr("bind", "add", "srv", "prog", "--url", "u", "-p", "80", "--help", "-h", "--force", "--version")
@@ -260,12 +263,12 @@ class AddRefusalTests(BindTestCase):
         self.assert_refused("host", "echo")
         self.assertFalse(self.file.exists())
 
-    @unittest.skipUnless(POSIX, "shell-style splitting")
     def test_unbalanced_quotes_in_a_one_argument_command_change_nothing(self) -> None:
         self.write_file({"keep": ["echo"]})
         before = self.file.read_bytes()
 
-        result = self.jzr("bind", "add", "t", "echo 'oops")
+        # A double quote is a quote on both systems; a single quote only on POSIX.
+        result = self.jzr("bind", "add", "t", 'echo "oops')
 
         self.assertNotEqual(result.exit_code, 0)
         self.assertNotIn("No such command", result.stderr)
@@ -307,7 +310,7 @@ class ListTests(BindTestCase):
             [
                 "a       ls -l",
                 "tunnel  ngrok http 5173 --url https://example.dev",
-                "zz      echo 'hello world'",
+                f"zz      echo {QUOTED_HELLO_WORLD}",
             ],
         )
 

@@ -7,7 +7,9 @@ modules are loaded only when a command is actually invoked.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import importlib
+import sys
 
 import click
 
@@ -31,6 +33,10 @@ _COMMANDS: dict[str, tuple[str, str]] = {
         "Force-kill processes using a local port (Windows, Linux, and macOS).",
     ),
 }
+
+
+# Commands defined on the root group itself, below.
+_ROOT_COMMANDS = frozenset({"version"})
 
 
 class LazyGroup(click.Group):
@@ -106,6 +112,28 @@ def version() -> None:
     click.echo(__version__)
 
 
+def should_expand_windows_args(argv: Sequence[str]) -> bool:
+    """Decide whether Click may expand ``$VAR``, ``%VAR%``, ``~`` and globs.
+
+    On Windows the shell leaves that to the program, and Click does it for
+    every argument. File commands want the globs; a bound command and the
+    words given to ``bind`` must reach the program exactly as typed.
+    """
+    if not argv:
+        return True
+    first = argv[0]
+    if first == "bind":
+        return False
+    if first.startswith("-") or first in _COMMANDS or first in _ROOT_COMMANDS:
+        return True
+    from jzr_tools.core import bindings
+
+    try:
+        return first not in bindings.load()
+    except bindings.BindingError:
+        return True  # the binding fallback reports the damaged file
+
+
 def main() -> None:
     """Console script entrypoint."""
-    app()
+    app(windows_expand_args=should_expand_windows_args(sys.argv[1:]))
