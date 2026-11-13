@@ -23,6 +23,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     ),
     "text": ("jzr_tools.commands.text:app", "Text utilities."),
     "port": ("jzr_tools.commands.network:app", "Inspect and free local ports."),
+    "host": ("jzr_tools.commands.host:app", "Inspect this machine."),
     # The one shortcut: the same command as `jzr port kill`.
     "killport": (
         "jzr_tools.commands.network:killport",

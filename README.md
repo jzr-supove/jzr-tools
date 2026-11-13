@@ -50,6 +50,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr port show` | Show which processes are using a local port |
 | `jzr port kill` | Force-kill the processes using a local port |
 | `jzr killport` | Shortcut for `jzr port kill` |
+| `jzr host status` | Show host, CPU, memory, storage and GPU status |
 | `jzr version` | Print the installed toolkit version |
 
 ## Image Conversion
@@ -172,6 +173,81 @@ port is still unavailable. A restart is not guaranteed to clear a reservation,
 and Windows may reserve the port again later. Administered exclusions (`*`) are
 reported without restarting HNS. The command does not delete reservations or
 change dynamic port ranges. Linux and macOS reject `--restart-hns`.
+
+## Host status
+
+See what the machine is and how busy it is:
+
+```bash
+jzr host status                 # host, CPU, memory, storage, GPU
+jzr host status --detail        # plus per-core usage, swap, every mount, network, sensors
+jzr host status --live          # keep refreshing until Ctrl+C
+jzr host status --live -n 0.5   # refresh every half second
+jzr host status --json          # everything, for scripts
+```
+
+```text
+╭─ fedora ──────────────────────────────────────────────────────╮
+│  Fedora Linux 42 (Workstation Edition)  x86_64  up 4h 30m     │
+├─ CPU ─────────────────────────────────────────────────────────┤
+│  12th Gen Intel(R) Core(TM) i7-12700  (12 cores, 20 threads)  │
+│  Usage      ████░░░░░░░░░░░░░░░░   19%                        │
+│  Load       1.94  2.13  2.32                                  │
+├─ Memory ──────────────────────────────────────────────────────┤
+│  RAM        ██████████████░░░░░░   70%     21.8 / 31.1 GiB    │
+├─ Storage ─────────────────────────────────────────────────────┤
+│  /          ████████████████░░░░   81%   363.5 / 451.6 GiB    │
+│  /boot      ██████████░░░░░░░░░░   48%   430.6 / 973.4 MiB    │
+├─ GPU ─────────────────────────────────────────────────────────┤
+│  NVIDIA GeForce RTX 4080                                      │
+│  Usage      ██████░░░░░░░░░░░░░░   31%                        │
+│  Memory     █████░░░░░░░░░░░░░░░   25%      4.0 / 16.0 GiB    │
+│  Temp       63°C                                              │
+│                                                               │
+│  Intel UHD Graphics 770                                       │
+╰───────────────────────────────────────────────────────────────╯
+```
+
+Works on Windows, Linux and macOS using `psutil`, installed with the toolkit.
+Anything a system does not expose is left out of the text and is `null` in
+JSON; the command still exits `0`.
+
+Options: `-l/--live`, `-n/--interval SECONDS` (default 2, minimum 0.2, only
+with `--live`), `-d/--detail`, `--json`.
+
+Behavior worth knowing:
+
+- CPU usage is measured over a quarter of a second for a single reading, and
+  over the whole interval for each `--live` refresh.
+- Memory "used" is total minus available, so cache the system can give back
+  does not count as used.
+- Storage lists each device once, at its shortest mount point; `--detail`
+  lists every mount with its device, filesystem and free space. Loop devices
+  and snap images are never listed.
+- GPUs: NVIDIA cards are read through `nvidia-smi` on every system (usage,
+  memory, temperature, and in `--detail` driver and power). On Linux, AMD
+  cards report the same through the kernel, and Intel cards are listed by
+  name. On Windows and macOS other adapters are listed by name only, because
+  neither system offers a simple way to read their usage.
+- Load average is not shown on Windows, which has none. Temperatures come
+  from the kernel's sensors and are only available on Linux.
+- `--json` always carries everything, with or without `--detail`. Sizes are
+  bytes, percentages run 0-100, and times are ISO 8601. With `--live` it
+  prints one compact JSON document per line.
+- `--live` redraws in place on a terminal and leaves the last reading on
+  screen when you stop it. Piped to a file, readings are appended one after
+  another.
+- Colour is used only on a terminal, and never when `NO_COLOR` is set.
+- The frame is drawn with box characters. Where the output cannot show them
+  (a redirected stream on Windows, an ASCII locale) it falls back to `+`, `-`,
+  `|` and `[####....]` bars.
+- On a terminal the report never exceeds the window: lines that do not fit
+  are cut with `…`, and `--live` also stops at the window's height. Piped
+  output is never cut.
+
+The Windows and macOS code paths, AMD GPU readings and battery reporting are
+covered by tests on recorded sample output; they have not been run on real
+hardware yet.
 
 ## Text
 

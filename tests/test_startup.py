@@ -16,7 +16,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = PROJECT_ROOT / "src"
 
-LAZY_NAMES = {"image", "text", "port", "killport"}
+LAZY_NAMES = {"image", "text", "port", "killport", "host"}
 BOX_CHARS = ("╭", "│", "╰", "─")
 
 _RUNNER = """
@@ -175,6 +175,8 @@ class CommandLoadsOnlyItsOwnTests(_ObservedTestCase):
                 "jzr_tools.core.network",
                 "jzr_tools.core.images",
                 "jzr_tools.core.windows_network",
+                "jzr_tools.commands.host",
+                "jzr_tools.core.host",
             ],
         )
 
@@ -182,8 +184,34 @@ class CommandLoadsOnlyItsOwnTests(_ObservedTestCase):
         obs = self.run_cli("image", "formats")
         self.assert_ok(obs)
         self.assert_not_loaded(
-            obs, ["psutil", "jzr_tools.commands.network", "jzr_tools.commands.text"]
+            obs,
+            [
+                "psutil",
+                "jzr_tools.commands.network",
+                "jzr_tools.commands.text",
+                "jzr_tools.commands.host",
+                "jzr_tools.core.host",
+            ],
         )
+
+    def test_host_status_json_does_not_load_image_or_text_code(self) -> None:
+        obs = self.run_cli("host", "status", "--json")
+        self.assert_ok(obs)
+        self.assert_not_loaded(
+            obs,
+            [
+                "jzr_tools.commands.image",
+                "jzr_tools.core.images",
+                "jzr_tools.commands.text",
+            ],
+        )
+
+    def test_host_help_flags_exit_zero_and_print_usage(self) -> None:
+        for args in (["host", "-h"], ["host", "status", "-h"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
 
     def test_killport_help_does_not_load_image_code(self) -> None:
         obs = self.run_cli("killport", "--help")
@@ -214,7 +242,7 @@ class RegistryTests(unittest.TestCase):
         self.assertIsInstance(lazy, dict, "app.lazy_commands must be a dict")
         return lazy
 
-    def test_lazy_commands_keys_are_exactly_the_four_commands(self) -> None:
+    def test_lazy_commands_keys_are_exactly_the_registered_commands(self) -> None:
         self.assertEqual(set(self._lazy()), LAZY_NAMES)
 
     def test_lazy_commands_values_are_import_path_and_help_tuples(self) -> None:
@@ -257,6 +285,7 @@ class RegistryTests(unittest.TestCase):
                 "text": "jzr_tools.commands.text:app",
                 "port": "jzr_tools.commands.network:app",
                 "killport": "jzr_tools.commands.network:killport",
+                "host": "jzr_tools.commands.host:app",
             },
         )
 

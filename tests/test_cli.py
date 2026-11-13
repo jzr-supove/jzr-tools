@@ -55,7 +55,7 @@ class CliTests(unittest.TestCase):
             r"^  (\S+)", result.stdout.split("Commands:", 1)[1], flags=re.MULTILINE
         )
         self.assertEqual(
-            sorted(listed), ["image", "killport", "port", "text", "version"]
+            sorted(listed), ["host", "image", "killport", "port", "text", "version"]
         )
 
     def test_removed_root_commands_are_unknown(self) -> None:
