@@ -93,7 +93,8 @@ class MagickCommandTests(unittest.TestCase):
         for name in ("100%d.png", "50%.png", "d%d/shot.png"):
             with self.subTest(source=name):
                 command = build_command("magick", MAGICK, Path(name), Path("out.jpg"))
-                self.assertEqual(command, ["magick", name, "-delete", "1--1", "out.jpg"])
+                # The source is passed on as the platform renders the Path.
+                self.assertEqual(command, ["magick", str(Path(name)), "-delete", "1--1", "out.jpg"])
 
     def test_percent_source_keeps_frame_drop_before_quality_option(self) -> None:
         command = build_command(

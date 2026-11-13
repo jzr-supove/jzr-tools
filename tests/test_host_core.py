@@ -250,9 +250,11 @@ class ReadDrmGpusTests(DrmTreeCase):
             "10DE:2704": "NVIDIA",
             "1234:abcd": None,
         }
-        for pci_id, vendor in cases.items():
+        for number, (pci_id, vendor) in enumerate(cases.items()):
             with self.subTest(pci_id=pci_id):
-                root = self.root / pci_id.replace(":", "_")
+                # Numbered, because "10de" and "10DE" are one name on a
+                # case-insensitive filesystem.
+                root = self.root / f"case{number}"
                 root.mkdir()
                 card = root / "card0" / "device"
                 card.mkdir(parents=True)

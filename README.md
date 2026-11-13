@@ -250,9 +250,9 @@ Behavior worth knowing:
   are cut with `…`, and `--live` also stops at the window's height. Piped
   output is never cut.
 
-The Windows and macOS code paths, AMD GPU readings and battery reporting are
-covered by tests on recorded sample output; they have not been run on real
-hardware yet.
+Linux and Windows 11 (with an NVIDIA card) have been run on real hardware. The
+macOS code path, AMD GPU readings and battery reporting are covered by tests
+on recorded sample output only.
 
 ## Host clean
 
