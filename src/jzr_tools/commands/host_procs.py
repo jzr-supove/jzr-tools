@@ -141,10 +141,17 @@ def render_procs(
     figures = [(human_size(memory), human_size(swap)) for _, _, memory, swap in summary]
 
     table = [header, *(_cells(row) for row in rows)]
-    last = len(header) - 1
+    # Windows keeps no per-process share of the page file, so there is no
+    # swap figure to show for a process or a sum of processes.
+    with_swap = not core._windows()
+    if not with_swap:
+        table = [line[:3] + line[4:] for line in table]
+        numeric.discard(3)
+    last = len(table[0]) - 1
     widths = [max(len(line[column]) for line in table) for column in range(last)]
     widths[2] = max(widths[2], *(len(memory) for memory, _ in figures))
-    widths[3] = max(widths[3], *(len(swap) for _, swap in figures))
+    if with_swap:
+        widths[3] = max(widths[3], *(len(swap) for _, swap in figures))
     label_width = max(len(label) for label, *_ in summary)
     if each:
         # No column counts processes here; the label spans PID and name.
@@ -156,7 +163,8 @@ def render_procs(
         widths[1] = max(widths[1], *(len(count) for _, count, *_ in summary))
         counts = [GAP + count.rjust(widths[1]) for _, count, *_ in summary]
     summary_lines = [
-        f"{pad(label, label_width)}{count}{GAP}{memory.rjust(widths[2])}{GAP}{swap.rjust(widths[3])}"
+        f"{pad(label, label_width)}{count}{GAP}{memory.rjust(widths[2])}"
+        + (f"{GAP}{swap.rjust(widths[3])}" if with_swap else "")
         for (label, *_), count, (memory, swap) in zip(summary, counts, figures)
     ]
 
@@ -202,6 +210,11 @@ def _document(rows: list[Row]) -> list[dict[str, object]]:
         entry["protected"] = row.protected or None
         document.append(entry)
     return document
+
+
+def _without_swap(figures: dict[str, int] | None) -> dict[str, int | None] | None:
+    """Mark a sum's swap as unknown: Windows has no per-process share of it."""
+    return None if figures is None else {**figures, "swap_bytes": None}
 
 
 def _describe(process: Proc) -> str:
@@ -312,11 +325,12 @@ def procs(
             outside = _outside(processes, machine)
 
     if as_json:
-        document = {
-            "memory": machine,
-            "rows": _document(rows),
-            "totals": {"shown": _sums(rows), "all": _sums(matching), "outside": outside},
-        }
+        totals = {"shown": _sums(rows), "all": _sums(matching), "outside": outside}
+        entries = _document(rows)
+        if core._windows():
+            totals = {name: _without_swap(figures) for name, figures in totals.items()}
+            entries = [{**entry, "swap_bytes": None} for entry in entries]
+        document = {"memory": machine, "rows": entries, "totals": totals}
         click.echo(json.dumps(document, indent=2))
         return
     if not rows:

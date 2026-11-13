@@ -41,6 +41,19 @@ KIB = 1024
 
 runner = CliRunner()
 
+# These tests pin the layout with a Swap column, which only systems that keep
+# a per-process share of swap show. The Windows layout is pinned in
+# test_procs_windows, whose tests patch the platform themselves.
+_linux_layout = mock.patch("jzr_tools.core.procs._windows", return_value=False)
+
+
+def setUpModule() -> None:  # noqa: N802
+    _linux_layout.start()
+
+
+def tearDownModule() -> None:  # noqa: N802
+    _linux_layout.stop()
+
 
 def make_proc(pid: int, **overrides):
     procs = importlib.import_module("jzr_tools.core.procs")

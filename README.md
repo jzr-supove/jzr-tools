@@ -404,7 +404,21 @@ Behavior worth knowing:
 - `--kill` needs a terminal. For scripted killing use `pkill`.
 - Exit code `1` means a process could not be ended or is still running.
 
-Works wherever `psutil` does; only Linux has been tried.
+On Windows:
+
+- "Asked to exit" means each chosen program's windows are told to close, as
+  clicking their X would, so it can save or ask you first. A program without
+  a window cannot be asked, so it goes straight to the force-kill question.
+  Force-killing is `TerminateProcess`.
+- Windows keeps no per-process share of the page file, so the table has no
+  Swap column and `--json` gives `null` for it. The Swap bar at the top is
+  the page file.
+- Protected as `(system)`: services and anything owned by `NT AUTHORITY`, and
+  the shell and log-on processes (`explorer.exe`, `dwm.exe`, `csrss.exe`,
+  `winlogon.exe`, `sihost.exe`, `svchost.exe` and the like).
+
+Tried on Linux and Windows 11; ending processes only on throwaway child
+processes.
 
 ## Bind
 

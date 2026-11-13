@@ -18,6 +18,19 @@ import psutil
 POSIX = os.name == "posix"
 MIB = 1024**2
 
+# The faked tests here describe the POSIX rules (SIGTERM first, the Linux
+# session names). The Windows rules are pinned in test_procs_windows, whose
+# tests patch the platform themselves.
+_posix_rules = mock.patch("jzr_tools.core.procs._windows", return_value=False)
+
+
+def setUpModule() -> None:  # noqa: N802
+    _posix_rules.start()
+
+
+def tearDownModule() -> None:  # noqa: N802
+    _posix_rules.stop()
+
 
 def load():
     """Import lazily so every test fails on its own while the module is missing."""
