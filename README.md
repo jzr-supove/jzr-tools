@@ -52,6 +52,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr killport` | Shortcut for `jzr port kill` |
 | `jzr host status` | Show host, CPU, memory, storage and GPU status |
 | `jzr host clean` | Find caches and other disposable data, and remove what you pick |
+| `jzr host procs` | Show what uses the most memory; optionally end what you pick |
 | `jzr version` | Print the installed toolkit version |
 
 ## Image Conversion
@@ -310,6 +311,70 @@ Behavior worth knowing:
 Removal has been run against a throwaway home directory only; the Docker,
 `sudo`, journal, dnf and apt commands are covered by tests with the commands
 faked and have not been run for real.
+
+## Host procs
+
+See what is using memory, by application, and optionally end some of it:
+
+```bash
+jzr host procs                  # the 15 biggest applications
+jzr host procs chrome           # only rows whose name or command line contains "chrome"
+jzr host procs --each -n 30     # single processes, with PID and command line
+jzr host procs --kill           # tick rows, confirm, and end them
+jzr host procs --kill --force   # ...and force-kill whatever ignores the request
+jzr host procs --json           # for scripts
+```
+
+```text
+╭─ Memory ───────────────────────────────────────────────╮
+│  RAM   ██████████████░░░░░░   72%   22.3 / 31.1 GiB    │
+│  Swap  ████████████████████  100%     8.0 / 8.0 GiB    │
+├─ Applications (5 of 166) ──────────────────────────────┤
+│  Application         Procs    Memory       Swap  User  │
+│  qemu-system-x86_64      1   3.4 GiB   36.1 MiB  sam   │
+│  pycharm                 1   2.9 GiB  263.3 MiB  sam   │
+│  msedge                 29   2.4 GiB  577.4 MiB  sam   │
+│  node                   40   2.0 GiB    2.0 GiB  sam   │
+│  claude                  4   1.1 GiB   86.9 MiB  sam   │
+├─ Total ────────────────────────────────────────────────┤
+│  Top 5                  75  11.8 GiB    2.9 GiB        │
+│  All 166               354  17.1 GiB    6.7 GiB        │
+│  Outside processes           5.2 GiB    1.3 GiB        │
+│  In use                     22.3 GiB    8.0 GiB        │
+╰────────────────────────────────────────────────────────╯
+```
+
+Behavior worth knowing:
+
+- A row is every process of one user running the same program, so a browser
+  is one line. All scripts run by the same interpreter also share a line; use
+  `--each` to tell them apart.
+- Memory and swap are each process's fair share of what it uses (pages shared
+  by several processes are split between them), so the numbers add up. For
+  other users' processes only the plain resident size is readable.
+- The `Total` section adds up the Procs, Memory and Swap columns. `Top N` is
+  the rows in the table; `All M` is everything that matched, including what
+  `--top` left out (only `All M` appears when nothing was left out).
+- `Outside processes` is what the machine has in use that belongs to no
+  process: the kernel's own memory, shared memory, and cache it does not
+  count as free. `All` plus `Outside processes` gives `In use`, the same
+  figures as the bars at the top. Both rows are left out when you filter with
+  a pattern, because the sums then cover only what matched.
+- The report uses the same frame as `jzr host status`: plain `+ - |`
+  characters where the output cannot show boxes, and cut to the window's
+  width on a terminal. A protected row ends with the reason, such as
+  `(system)` or `(this terminal)`.
+- `--kill` ticks nothing for you. Processes are first asked to exit; after 5
+  seconds it asks whether to force-kill what is left (`--force` skips that
+  question). Only the processes listed are signalled, not their children.
+- It will not end this terminal (the `jzr` process and its parents), other
+  users' processes, or the session itself: `systemd`, the desktop shell, the
+  display server, the sound and message services, `sshd`. A group that
+  contains one of these can still be ticked; the protected ones are kept.
+- `--kill` needs a terminal. For scripted killing use `pkill`.
+- Exit code `1` means a process could not be ended or is still running.
+
+Works wherever `psutil` does; only Linux has been tried.
 
 ## Text
 

@@ -58,6 +58,21 @@ class CliTests(unittest.TestCase):
             sorted(listed), ["host", "image", "killport", "port", "text", "version"]
         )
 
+    def test_host_help_lists_status_clean_and_procs(self) -> None:
+        result = runner.invoke(app, ["host", "-h"])
+
+        self.assertEqual(result.exit_code, 0)
+        listed = re.findall(
+            r"^  (\S+)", result.stdout.split("Commands:", 1)[1], flags=re.MULTILINE
+        )
+        self.assertEqual(sorted(listed), ["clean", "procs", "status"])
+
+    def test_host_clean_help_exits_zero(self) -> None:
+        result = runner.invoke(app, ["host", "clean", "-h"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("--dry-run", result.stdout)
+
     def test_removed_root_commands_are_unknown(self) -> None:
         for name in ("convert", "png2jpg", "fs", "system"):
             with self.subTest(name=name):

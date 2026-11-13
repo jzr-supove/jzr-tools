@@ -41,13 +41,17 @@ _ENTER_SCREEN, _LEAVE_SCREEN = "\x1b[?1049h", "\x1b[?1049l"
 _HOME, _CLEAR_LINE, _CLEAR_BELOW = "\x1b[H", "\x1b[K", "\x1b[J"
 
 
-# Other host commands live in their own modules and are loaded only when
+# The other host commands live in their own modules and are loaded only when
 # used, so `jzr host status` does not pay for them. The help is repeated here
 # for the same reason as in `jzr_tools.cli`.
 _COMMANDS: dict[str, tuple[str, str]] = {
     "clean": (
         "jzr_tools.commands.host_clean:clean",
         "Find caches and other disposable data, and remove what you pick.",
+    ),
+    "procs": (
+        "jzr_tools.commands.host_procs:procs",
+        "Show what uses the most memory, grouped by application.",
     ),
 }
 

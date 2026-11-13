@@ -130,6 +130,7 @@ class NoTyperTests(unittest.TestCase):
         self.assertNotIn("typer", names)
         self.assertIn("click", names)
         self.assertIn("psutil", names)
+        self.assertIn("questionary", names)
 
     def test_app_is_a_click_group(self) -> None:
         import click
@@ -224,6 +225,63 @@ class CommandLoadsOnlyItsOwnTests(_ObservedTestCase):
         self.assert_not_loaded(obs, ["jzr_tools.commands.image", "jzr_tools.core.images"])
 
 
+HOST_ONLY_MODULES = [
+    "jzr_tools.core.cleanup",
+    "jzr_tools.core.procs",
+    "jzr_tools.commands.host_clean",
+    "jzr_tools.commands.host_procs",
+    "jzr_tools.prompts",
+    "questionary",
+    "prompt_toolkit",
+]
+PROMPT_MODULES = ["questionary", "prompt_toolkit"]
+
+
+class HostSubcommandTests(_ObservedTestCase):
+    def test_host_help_lists_status_clean_and_procs(self) -> None:
+        obs = self.run_cli("host", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertEqual(sorted(listed), ["clean", "procs", "status"])
+
+    def test_host_help_loads_no_subcommand_module(self) -> None:
+        obs = self.run_cli("host", "-h")
+        self.assert_ok(obs)
+        self.assert_not_loaded(obs, HOST_ONLY_MODULES)
+
+    def test_host_status_json_loads_none_of_the_clean_or_procs_code(self) -> None:
+        obs = self.run_cli("host", "status", "--json")
+        self.assert_ok(obs)
+        self.assert_not_loaded(obs, HOST_ONLY_MODULES)
+
+    def test_host_clean_help_exits_zero_without_prompt_libraries(self) -> None:
+        obs = self.run_cli("host", "clean", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        self.assert_not_loaded(obs, PROMPT_MODULES)
+
+    def test_host_clean_json_prints_a_document_without_prompt_libraries(self) -> None:
+        obs = self.run_cli("host", "clean", "--json")
+        self.assert_ok(obs)
+        document = json.loads(obs.stdout)
+        self.assertEqual(set(document), {"items", "total_bytes", "selected_bytes"})
+        self.assert_not_loaded(obs, PROMPT_MODULES)
+
+    def test_host_clean_dry_run_loads_no_prompt_libraries(self) -> None:
+        obs = self.run_cli("host", "clean", "--dry-run")
+        self.assert_ok(obs)
+        self.assertTrue(
+            "Dry run: nothing was removed." in obs.stdout or "Nothing to clean." in obs.stdout,
+            obs.describe(),
+        )
+        self.assert_not_loaded(obs, PROMPT_MODULES)
+
+    def test_host_clean_without_a_terminal_is_a_usage_error_before_prompting(self) -> None:
+        obs = self.run_cli("host", "clean")
+        self.assertEqual(obs.exit_code, "2", obs.describe())
+        self.assert_not_loaded(obs, PROMPT_MODULES)
+
+
 class RegistryTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -270,6 +328,21 @@ class RegistryTests(unittest.TestCase):
             with self.subTest(name=name):
                 command = self.app.get_command(ctx, name)
                 self.assertIsInstance(command, self.click.Command)
+                self.assertEqual(help_text, command.get_short_help_str(limit=300))
+
+    def test_host_group_lazily_registers_clean_and_procs(self) -> None:
+        ctx = self.click.Context(self.app)
+        host = self.app.get_command(ctx, "host")
+        lazy = getattr(host, "lazy_commands", None)
+        self.assertIsInstance(lazy, dict, "host must be a LazyGroup")
+        self.assertEqual(set(lazy), {"clean", "procs"})
+        self.assertEqual(lazy["clean"][0].partition(":")[0], "jzr_tools.commands.host_clean")
+        self.assertEqual(lazy["procs"][0].partition(":")[0], "jzr_tools.commands.host_procs")
+        self.assertIn("status", host.commands)
+        host_ctx = self.click.Context(host)
+        for name, (_path, help_text) in lazy.items():
+            with self.subTest(name=name):
+                command = host.get_command(host_ctx, name)
                 self.assertEqual(help_text, command.get_short_help_str(limit=300))
 
     def test_get_command_unknown_returns_none(self) -> None:
