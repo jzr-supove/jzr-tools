@@ -167,6 +167,63 @@ class DataTests(unittest.TestCase):
             prompts.Heading("t").text = "u"  # type: ignore[misc]
 
 
+class LookTests(unittest.TestCase):
+    """The real questionary: check marks, no grey band, plain letters as a fallback."""
+
+    def test_rows_are_drawn_with_check_marks_only_while_the_list_is_open(self) -> None:
+        from questionary.prompts import common
+
+        from jzr_tools import prompts
+
+        before = common.INDICATOR_SELECTED, common.INDICATOR_UNSELECTED
+        seen = []
+
+        def ask():
+            seen.append((common.INDICATOR_SELECTED, common.INDICATOR_UNSELECTED))
+            return ["a"]
+
+        # A real list needs a console; the question is faked, the markers are not.
+        with mock.patch("questionary.checkbox", return_value=mock.Mock(ask=ask)) as checkbox, \
+             mock.patch.object(prompts, "_glyphs", return_value=prompts._UNICODE):
+            answer = prompts.choose("Pick", [prompts.Choice("a", "A", checked=True)])
+
+        self.assertEqual(answer, ["a"])
+        self.assertEqual(seen, [("✔", "○")])
+        self.assertEqual((common.INDICATOR_SELECTED, common.INDICATOR_UNSELECTED), before)
+        self.assertEqual(checkbox.call_args.kwargs["pointer"], "›")
+
+    def test_markers_are_put_back_even_when_the_list_fails(self) -> None:
+        from questionary.prompts import common
+
+        from jzr_tools import prompts
+
+        before = common.INDICATOR_SELECTED, common.INDICATOR_UNSELECTED
+        failing = mock.Mock(ask=mock.Mock(side_effect=RuntimeError("boom")))
+        with mock.patch("questionary.checkbox", return_value=failing):
+            with self.assertRaises(RuntimeError):
+                prompts.choose("Pick", [prompts.Choice("a", "A")])
+        self.assertEqual((common.INDICATOR_SELECTED, common.INDICATOR_UNSELECTED), before)
+
+    def test_ticked_and_highlighted_rows_are_not_drawn_in_reverse(self) -> None:
+        from jzr_tools import prompts
+
+        for name in ("selected", "highlighted"):
+            with self.subTest(name=name):
+                self.assertIn("noreverse", prompts._STYLE[name])
+        self.assertIn("ansigreen", prompts._STYLE["selected"])
+
+    def test_an_output_without_the_symbols_gets_plain_letters(self) -> None:
+        from jzr_tools import prompts
+
+        for encoding, expected in (("utf-8", prompts._UNICODE), ("cp1252", prompts._ASCII), ("ascii", prompts._ASCII)):
+            with self.subTest(encoding=encoding):
+                stream = mock.Mock(encoding=encoding)
+                with mock.patch.object(prompts.sys, "stdout", stream):
+                    self.assertEqual(prompts._glyphs(), expected)
+        for glyph in (prompts._ASCII.ticked, prompts._ASCII.unticked, prompts._ASCII.pointer, prompts._ASCII.keys):
+            glyph.encode("ascii")
+
+
 class ImportCostTests(unittest.TestCase):
     def test_importing_prompts_does_not_import_questionary(self) -> None:
         code = (
