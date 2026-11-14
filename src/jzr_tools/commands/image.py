@@ -12,16 +12,15 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 import re
-import shlex
-from typing import Callable, Sequence
+from typing import Sequence
 
 import click
 
+from jzr_tools.commands._batch import batch_options, compile_pattern, report, summarize
 from jzr_tools.core.images import (
     BACKENDS,
     SUPPORTED_EXTENSIONS,
     BackendUnavailableError,
-    ConversionResult,
     convert_file,
     detect_backends,
     equivalent_extensions,
@@ -68,90 +67,23 @@ def app() -> None:
     """
 
 
-def _conversion_options(function: Callable[..., None]) -> Callable[..., None]:
-    """Attach the argument and options shared by ``convert`` and the pair form."""
-    decorators = [
-        click.argument("sources", nargs=-1, type=click.Path(path_type=Path)),
-        click.option(
-            "-d",
-            "--dir",
-            "directory",
-            type=click.Path(exists=True, file_okay=False, path_type=Path),
-            default=None,
-            help="Directory to scan when no SOURCES are listed.  [default: .]",
-        ),
-        click.option(
-            "-p",
-            "--pattern",
-            default=None,
-            help="Regex filter applied to candidate filenames.",
-        ),
-        click.option(
-            "-r",
-            "--recursive",
-            is_flag=True,
-            help="Recurse into subdirectories while scanning.",
-        ),
-        click.option(
-            "-o",
-            "--outdir",
-            type=click.Path(file_okay=False, path_type=Path),
-            default=None,
-            help="Write outputs here instead of beside each source.",
-        ),
-        click.option(
-            "-q",
-            "--quality",
-            type=click.IntRange(1, 100),
-            default=None,
-            help="Output quality, 1-100 (higher is better).",
-        ),
-        click.option(
-            "-b",
-            "--backend",
-            type=_BACKEND_CHOICE,
-            default="auto",
-            show_default=True,
-            help="Conversion engine: built-in Pillow, or ImageMagick from PATH.",
-        ),
-        click.option("--overwrite", is_flag=True, help="Replace existing output files."),
-        click.option(
-            "--dry-run", is_flag=True, help="Show what would be converted; write nothing."
-        ),
-    ]
-    # Decorators apply bottom-up, so reverse to keep this order in --help.
-    for decorator in reversed(decorators):
-        function = decorator(function)
-    return function
-
-
-def _report(result: ConversionResult) -> None:
-    if result.status == "planned":
-        if result.command:
-            click.echo(shlex.join(result.command))
-        else:
-            click.echo(f"{result.source} -> {result.target}")
-        if result.detail:
-            click.echo(f"note: {result.detail}", err=True)
-    elif result.status == "converted":
-        click.echo(f"{result.source} -> {result.target}")
-    elif result.status == "skipped":
-        click.echo(f"skip {result.source}: {result.detail}", err=True)
-    else:
-        click.echo(f"fail {result.source}: {result.detail}", err=True)
-
-
-def _compile_pattern(pattern: str | None) -> re.Pattern[str] | None:
-    """Compile ``--pattern``, turning a bad regex into a usage error."""
-    if pattern is None:
-        return None
-    try:
-        return re.compile(pattern)
-    except re.error as error:
-        raise click.BadParameter(
-            f"{pattern!r} is not a valid regular expression ({error}).",
-            param_hint="'--pattern'",
-        ) from error
+_conversion_options = batch_options(
+    click.option(
+        "-q",
+        "--quality",
+        type=click.IntRange(1, 100),
+        default=None,
+        help="Output quality, 1-100 (higher is better).",
+    ),
+    click.option(
+        "-b",
+        "--backend",
+        type=_BACKEND_CHOICE,
+        default="auto",
+        show_default=True,
+        help="Conversion engine: built-in Pillow, or ImageMagick from PATH.",
+    ),
+)
 
 
 def _supported_extension(value: str) -> str:
@@ -234,13 +166,9 @@ def _run(
             dry_run=dry_run,
         )
         counts[result.status] += 1
-        _report(result)
+        report(result)
 
-    summary = ", ".join(f"{count} {status}" for status, count in sorted(counts.items()))
-    click.echo(f"{backend_name}: {summary}")
-
-    if counts["failed"]:
-        raise click.exceptions.Exit(1)
+    summarize(backend_name, counts)
 
 
 def _convert(
@@ -258,7 +186,7 @@ def _convert(
     dry_run: bool,
 ) -> None:
     """Select the sources for ``convert`` or a pair command, then convert them."""
-    regex = _compile_pattern(pattern)
+    regex = compile_pattern(pattern)
 
     if sources:
         if directory is not None or recursive:

@@ -54,7 +54,8 @@ class CliTests(unittest.TestCase):
             r"^  (\S+)", result.stdout.split("Commands:", 1)[1], flags=re.MULTILINE
         )
         self.assertEqual(
-            sorted(listed), ["bind", "host", "image", "killport", "port", "text", "version"]
+            sorted(listed),
+            ["audio", "bind", "host", "image", "killport", "port", "text", "version", "video"],
         )
 
     def test_host_help_lists_status_clean_and_procs(self) -> None:

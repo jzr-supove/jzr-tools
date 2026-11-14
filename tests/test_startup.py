@@ -18,7 +18,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = PROJECT_ROOT / "src"
 
-LAZY_NAMES = {"image", "text", "port", "killport", "host", "bind"}
+LAZY_NAMES = {"image", "text", "port", "killport", "host", "bind", "video", "audio"}
 BOX_CHARS = ("╭", "│", "╰", "─")
 
 _RUNNER = """
@@ -372,8 +372,61 @@ class RegistryTests(unittest.TestCase):
                 "killport": "jzr_tools.commands.network:killport",
                 "host": "jzr_tools.commands.host:app",
                 "bind": "jzr_tools.commands.bind:app",
+                "video": "jzr_tools.commands.video:app",
+                "audio": "jzr_tools.commands.audio:app",
             },
         )
+
+
+MEDIA_MODULES = [
+    "jzr_tools.core.ffmpeg",
+    "jzr_tools.core.media",
+    "jzr_tools.commands.video",
+    "jzr_tools.commands.audio",
+]
+HEAVY_MODULES = ["PIL", "psutil", "questionary", "jzr_tools.core.images"]
+
+
+class MediaStartupTests(_ObservedTestCase):
+    def test_calls_that_are_not_video_or_audio_never_load_the_media_code(self) -> None:
+        cases = [["--help"], ["--version"], ["image", "formats"], ["text", "slug", "Hello World"]]
+        for args in cases:
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, MEDIA_MODULES)
+
+    def test_root_help_lists_video_and_audio_with_their_help(self) -> None:
+        obs = self.run_cli("-h")
+        self.assert_ok(obs)
+        self.assertRegex(obs.stdout, r"(?m)^  video\s+\S")
+        self.assertRegex(obs.stdout, r"(?m)^  audio\s+\S")
+
+    def test_group_help_and_formats_load_no_image_or_prompt_code(self) -> None:
+        for group in ("video", "audio"):
+            for args in ([group, "-h"], [group, "formats"]):
+                with self.subTest(args=args):
+                    obs = self.run_cli(*args)
+                    self.assert_ok(obs)
+                    self.assert_not_loaded(obs, HEAVY_MODULES)
+
+    def test_group_help_lists_info_and_formats(self) -> None:
+        for group in ("video", "audio"):
+            with self.subTest(group=group):
+                obs = self.run_cli(group, "-h")
+                self.assert_ok(obs)
+                listed = re.findall(
+                    r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE
+                )
+                self.assertIn("info", listed)
+                self.assertIn("formats", listed)
+
+    def test_group_help_flags_exit_zero_and_print_usage(self) -> None:
+        for args in (["video", "info", "-h"], ["audio", "info", "-h"], ["video", "formats", "-h"], ["audio", "formats", "-h"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
 
 
 class RootHelpTests(_ObservedTestCase):

@@ -1,0 +1,106 @@
+"""Click pieces shared by the commands that turn files into other files.
+
+The options for choosing sources and outputs, the per-file result lines and
+the closing summary, so `jzr image convert` and the media commands behave the
+same way.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from pathlib import Path
+import re
+import shlex
+from typing import Callable
+
+import click
+
+from jzr_tools.core.batch import ConversionResult
+
+Decorator = Callable[[Callable[..., None]], Callable[..., None]]
+
+
+def batch_options(*extra: Decorator) -> Decorator:
+    """Attach SOURCES and the source/output options, with ``extra`` before
+    ``--overwrite`` and ``--dry-run``."""
+    decorators = [
+        click.argument("sources", nargs=-1, type=click.Path(path_type=Path)),
+        click.option(
+            "-d",
+            "--dir",
+            "directory",
+            type=click.Path(exists=True, file_okay=False, path_type=Path),
+            default=None,
+            help="Directory to scan when no SOURCES are listed.  [default: .]",
+        ),
+        click.option(
+            "-p",
+            "--pattern",
+            default=None,
+            help="Regex filter applied to candidate filenames.",
+        ),
+        click.option(
+            "-r",
+            "--recursive",
+            is_flag=True,
+            help="Recurse into subdirectories while scanning.",
+        ),
+        click.option(
+            "-o",
+            "--outdir",
+            type=click.Path(file_okay=False, path_type=Path),
+            default=None,
+            help="Write outputs here instead of beside each source.",
+        ),
+        *extra,
+        click.option("--overwrite", is_flag=True, help="Replace existing output files."),
+        click.option(
+            "--dry-run", is_flag=True, help="Show what would be converted; write nothing."
+        ),
+    ]
+
+    def apply(function: Callable[..., None]) -> Callable[..., None]:
+        # Decorators apply bottom-up, so reverse to keep this order in --help.
+        for decorator in reversed(decorators):
+            function = decorator(function)
+        return function
+
+    return apply
+
+
+def compile_pattern(pattern: str | None) -> re.Pattern[str] | None:
+    """Compile ``--pattern``, turning a bad regex into a usage error."""
+    if pattern is None:
+        return None
+    try:
+        return re.compile(pattern)
+    except re.error as error:
+        raise click.BadParameter(
+            f"{pattern!r} is not a valid regular expression ({error}).",
+            param_hint="'--pattern'",
+        ) from error
+
+
+def report(result: ConversionResult) -> None:
+    """Print the line for one file: stdout for work done, stderr otherwise."""
+    if result.status == "planned":
+        if result.command:
+            click.echo(shlex.join(result.command))
+        else:
+            click.echo(f"{result.source} -> {result.target}")
+        if result.detail:
+            click.echo(f"note: {result.detail}", err=True)
+    elif result.status == "converted":
+        click.echo(f"{result.source} -> {result.target}")
+    elif result.status == "skipped":
+        click.echo(f"skip {result.source}: {result.detail}", err=True)
+    else:
+        click.echo(f"fail {result.source}: {result.detail}", err=True)
+
+
+def summarize(label: str, counts: Counter[str]) -> None:
+    """Print ``label: 2 converted, 1 failed`` and exit 1 if anything failed."""
+    summary = ", ".join(f"{count} {status}" for status, count in sorted(counts.items()))
+    click.echo(f"{label}: {summary}")
+    if counts["failed"]:
+        raise click.exceptions.Exit(1)

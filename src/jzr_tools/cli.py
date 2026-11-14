@@ -20,6 +20,8 @@ from jzr_tools import __version__
 # keeps it equal to each command's own short help.
 _COMMANDS: dict[str, tuple[str, str]] = {
     "image": ("jzr_tools.commands.image:app", "Convert images between formats."),
+    "video": ("jzr_tools.commands.video:app", "Work with video files."),
+    "audio": ("jzr_tools.commands.audio:app", "Work with audio files."),
     "text": ("jzr_tools.commands.text:app", "Text utilities."),
     "port": ("jzr_tools.commands.network:app", "Inspect and free local ports."),
     "host": ("jzr_tools.commands.host:app", "Inspect and clean up this machine."),
@@ -131,6 +133,30 @@ def should_expand_windows_args(argv: Sequence[str]) -> bool:
         return True  # the binding fallback reports the damaged file
 
 
+def _utf8_output() -> None:
+    """Write UTF-8 to pipes and files, whatever the locale's encoding is.
+
+    On Windows a pipe gets the ANSI code page (often cp1252), which cannot
+    hold a Cyrillic file name, so result lines would end with a traceback.
+    A terminal is left alone: Click writes to the Windows console through
+    its wide-character API, and a POSIX terminal keeps the locale's encoding.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            terminal = stream.isatty()
+        except (OSError, ValueError):
+            terminal = False
+        if terminal:
+            # Never crash on a character the terminal cannot show.
+            reconfigure(errors="backslashreplace")
+        else:
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def main() -> None:
     """Console script entrypoint."""
+    _utf8_output()
     app(windows_expand_args=should_expand_windows_args(sys.argv[1:]))

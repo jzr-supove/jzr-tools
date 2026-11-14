@@ -45,6 +45,10 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr image convert` | Convert images between formats, one file or a whole directory |
 | `jzr image <from>2<to>` | Shorthand for a format pair, e.g. `jzr image png2jpg` |
 | `jzr image formats` | List supported extensions and the conversion engines available |
+| `jzr video info` | Show the container, duration, size and streams of video files |
+| `jzr video formats` | List video targets, the ffmpeg in use and which encoders it has |
+| `jzr audio info` | Show the format, streams and tags of audio files |
+| `jzr audio formats` | List audio targets, the ffmpeg in use and which encoders it has |
 | `jzr text slug` | Turn text into a URL-safe slug |
 | `jzr text kebab` | Turn text into lowercase kebab-case, optionally dated and copied |
 | `jzr port show` | Show which processes are using a local port |
@@ -136,6 +140,38 @@ With `--backend magick`:
 
 `jzr image formats` lists the supported extensions, the Pillow versions in
 use, and whether ImageMagick was found on `PATH`.
+
+## Video and Audio
+
+`jzr video` and `jzr audio` use ffmpeg and ffprobe. They are taken from
+`PATH`; set `JZR_FFMPEG` and `JZR_FFPROBE` to the programs' paths to use a
+particular copy instead. When neither is found the command says so and exits
+with code 1. To install ffmpeg:
+
+```bash
+winget install Gyan.FFmpeg     # Windows
+brew install ffmpeg            # macOS
+sudo apt install ffmpeg        # Debian, Ubuntu
+```
+
+`info` describes files: container, duration, size, overall bitrate, the
+video stream (codec, resolution, frame rate, pixel format), each audio
+stream, and rotation (in degrees clockwise) and HDR transfer when present.
+`audio info` adds title, artist, album, year, track and whether there is
+cover art. `--json` prints one array with the same facts as numbers and
+every tag. A file that is not media is reported on its own line and the rest
+are still shown; the exit code is then 1.
+
+```bash
+jzr video info clip.mov
+jzr video info *.mp4 --json
+jzr audio info song.mp3
+```
+
+`jzr video formats` and `jzr audio formats` list the target formats, which
+ffmpeg and ffprobe are used, their versions and where they were found, and
+which of the encoders jzr uses this ffmpeg build has. Include their output
+when reporting a problem.
 
 ## Ports
 
