@@ -6,11 +6,14 @@
   any ``<from>2<to>`` pair is resolved on demand.
 * ``jzr audio info FILE...`` describes audio files, tags included.
 * ``jzr audio formats`` lists the targets and what the ffmpeg build can do.
+* ``jzr audio tags FILE...`` prints or edits tags, cover art and lyrics in
+  place; it uses mutagen and never needs ffmpeg.
 """
 
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
 import re
 
@@ -55,8 +58,8 @@ class AudioGroup(click.Group):
 def app() -> None:
     """Work with audio files.
 
-    Needs ffmpeg and ffprobe: `jzr ffmpeg install` downloads them, and a
-    command that finds none offers to. JZR_FFMPEG and JZR_FFPROBE pick a
+    Needs ffmpeg and ffprobe, except for `tags`: `jzr ffmpeg install`
+    downloads them, and a command that finds none offers to. JZR_FFMPEG and JZR_FFPROBE pick a
     particular copy; PATH is used when jzr has none of its own. Besides the
     commands below, any format pair works as a command: 'jzr audio wav2mp3
     song.wav' is short for 'jzr audio convert song.wav --from wav --to mp3'.
@@ -261,3 +264,223 @@ app.add_command(
         help_text="Show the target formats, the ffmpeg in use and its audio encoders.",
     )
 )
+
+
+# --- tags --------------------------------------------------------------------
+
+_existing_file = click.Path(exists=True, dir_okay=False, path_type=Path)
+
+
+def _assignments(
+    ctx: click.Context, param: click.Parameter, values: tuple[str, ...]
+) -> dict[str, str]:
+    found: dict[str, str] = {}
+    if not values:
+        return found
+    from jzr_tools.core.tags import parse_assignment
+
+    for text in values:
+        try:
+            key, value = parse_assignment(text)
+        except ValueError as error:
+            raise click.BadParameter(str(error), ctx=ctx, param=param) from error
+        if key in found:
+            raise click.BadParameter(f"{key} is set more than once", ctx=ctx, param=param)
+        found[key] = value
+    return found
+
+
+def _unset_keys(
+    ctx: click.Context, param: click.Parameter, values: tuple[str, ...]
+) -> frozenset[str]:
+    if not values:
+        return frozenset()
+    from jzr_tools.core.tags import UNSET_KEYS, check_key
+
+    try:
+        return frozenset(check_key(value, UNSET_KEYS) for value in values)
+    except ValueError as error:
+        raise click.BadParameter(str(error), ctx=ctx, param=param) from error
+
+
+def _cover_image(ctx: click.Context, param: click.Parameter, value: Path | None) -> object:
+    if value is None:
+        return None
+    from jzr_tools.core.tags import load_cover
+
+    try:
+        return load_cover(value)
+    except (ValueError, OSError) as error:
+        raise click.BadParameter(str(error), ctx=ctx, param=param) from error
+
+
+def _lyrics_text(ctx: click.Context, param: click.Parameter, value: Path | None) -> str | None:
+    if value is None:
+        return None
+    try:
+        text = value.read_bytes().decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise click.BadParameter(f"{value} is not UTF-8 text", ctx=ctx, param=param) from error
+    except OSError as error:
+        raise click.BadParameter(f"cannot read {value}: {error.strerror}", ctx=ctx, param=param) from error
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip("\n")
+    if not text.strip():
+        raise click.BadParameter(f"{value} is empty", ctx=ctx, param=param)
+    return text
+
+
+@app.command()
+@click.argument("files", nargs=-1, required=True, type=_existing_file)
+@click.option("--json", "as_json", is_flag=True, help="Print one JSON array of the tags.")
+@click.option(
+    "-s",
+    "--set",
+    "values",
+    multiple=True,
+    metavar="KEY=VALUE",
+    callback=_assignments,
+    help="Set a tag; repeat for several.",
+)
+@click.option(
+    "-u",
+    "--unset",
+    "unset",
+    multiple=True,
+    metavar="KEY",
+    callback=_unset_keys,
+    help="Remove a tag, or the lyrics; repeat for several.",
+)
+@click.option("--clear", is_flag=True, help="Remove every tag, the cover and the lyrics first.")
+@click.option(
+    "--cover",
+    type=_existing_file,
+    callback=_cover_image,
+    metavar="IMAGE",
+    help="Embed a JPEG or PNG as the front cover, replacing any picture.",
+)
+@click.option("--no-cover", "remove_cover", is_flag=True, help="Remove the embedded pictures.")
+@click.option(
+    "--lyrics",
+    type=_existing_file,
+    callback=_lyrics_text,
+    metavar="FILE",
+    help="Embed the lyrics from a UTF-8 text file.",
+)
+@click.option(
+    "--export-cover",
+    type=click.Path(dir_okay=False, path_type=Path),
+    metavar="FILE",
+    help="Write the embedded cover to FILE (.jpg or .png); changes nothing.",
+)
+def tags(
+    files: tuple[Path, ...],
+    as_json: bool,
+    values: dict[str, str],
+    unset: frozenset[str],
+    clear: bool,
+    cover: object,
+    remove_cover: bool,
+    lyrics: str | None,
+    export_cover: Path | None,
+) -> None:
+    """Show or edit the tags, cover art and lyrics of audio files.
+
+    With no options it prints the tags of each FILE. Works on MP3, M4A, FLAC,
+    Ogg Vorbis and Opus, edits in place without touching the audio, and needs
+    no ffmpeg. Keys: title, artist, album, albumartist, year, track, disc,
+    genre, comment, composer. --clear runs first, so '--clear --set
+    title=X' leaves only the title.
+    """
+    from jzr_tools.core import tags as core
+
+    changes = bool(values or unset or clear or cover is not None or remove_cover or lyrics)
+    clash = sorted(set(values) & unset)
+    if clash:
+        raise click.UsageError(f"--set and --unset both name {', '.join(clash)}.")
+    if cover is not None and remove_cover:
+        raise click.UsageError("--cover and --no-cover cannot be used together.")
+    if as_json and (changes or export_cover is not None):
+        raise click.UsageError("--json only applies when reading tags.")
+    if export_cover is not None:
+        if changes:
+            raise click.UsageError("--export-cover cannot be combined with changes.")
+        if len(files) > 1:
+            raise click.UsageError("--export-cover takes exactly one FILE.")
+
+    failed = False
+
+    def fail(path: Path, error: Exception) -> None:
+        nonlocal failed
+        click.echo(f"fail {path}: {error}", err=True)
+        failed = True
+
+    if export_cover is not None:
+        try:
+            core.export_cover(files[0], export_cover)
+        except core.TagError as error:
+            fail(files[0], error)
+        else:
+            click.echo(f"{files[0]} -> {export_cover}")
+    elif changes:
+        edit = core.TagEdit(
+            values=values,
+            unset=unset,
+            clear=clear,
+            cover=cover,  # type: ignore[arg-type]
+            remove_cover=remove_cover,
+            lyrics=lyrics,
+        )
+        for path in files:
+            try:
+                core.apply_edit(path, edit)
+            except core.TagError as error:
+                fail(path, error)
+            else:
+                click.echo(f"updated {path}")
+    else:
+        _print_tags(files, as_json=as_json, fail=fail)
+
+    if failed:
+        raise click.exceptions.Exit(1)
+
+
+def _print_tags(files: tuple[Path, ...], *, as_json: bool, fail: Callable[[Path, Exception], None]) -> None:
+    import json
+
+    from jzr_tools.core import tags as core
+    from jzr_tools.core.media import format_size
+
+    documents: list[dict[str, object]] = []
+    printed = False
+    for path in files:
+        try:
+            found = core.read_tags(path)
+        except core.TagError as error:
+            fail(path, error)
+            continue
+        if as_json:
+            documents.append(core.tagset_as_dict(found, path))
+            continue
+
+        rows = [("format", found.format)]
+        rows += [(key, found.values[key]) for key in core.KEYS if key in found.values]
+        if found.cover is None:
+            rows.append(("cover", "none"))
+        else:
+            rows.append(("cover", f"{found.cover.mime}, {format_size(len(found.cover.data))}"))
+        if found.lyrics is None:
+            rows.append(("lyrics", "none"))
+        else:
+            count = len(found.lyrics.splitlines())
+            rows.append(("lyrics", f"{count} line" if count == 1 else f"{count} lines"))
+
+        width = max(len(label) for label, _ in rows)
+        if printed:
+            click.echo()
+        click.echo(str(path))
+        for label, value in rows:
+            click.echo(f"  {label.ljust(width)}  {value}")
+        printed = True
+
+    if as_json:
+        click.echo(json.dumps(documents, indent=2, ensure_ascii=False))

@@ -7,6 +7,7 @@ import json
 import os
 import pkgutil
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -467,6 +468,78 @@ class MediaStartupTests(_ObservedTestCase):
                 obs = self.run_cli(*args)
                 self.assert_ok(obs)
                 self.assertIn("Usage:", obs.stdout)
+
+
+class AudioTagsStartupTests(_ObservedTestCase):
+    def test_calls_that_do_not_read_tags_never_load_mutagen(self) -> None:
+        cases = [
+            ["--help"],
+            ["-h"],
+            ["audio", "-h"],
+            ["audio", "tags", "-h"],
+            ["audio", "info", "-h"],
+            ["audio", "formats"],
+            ["video", "-h"],
+            ["image", "formats"],
+            ["text", "slug", "x"],
+        ]
+        for args in cases:
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_no_prefix_loaded(obs, ["mutagen"])
+                self.assert_not_loaded(obs, ["jzr_tools.core.tags"])
+
+    def test_audio_group_help_lists_tags(self) -> None:
+        obs = self.run_cli("audio", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("tags", listed)
+
+    def test_tags_help_exits_zero_and_prints_usage(self) -> None:
+        obs = self.run_cli("audio", "tags", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        self.assert_not_loaded(obs, HEAVY_MODULES)
+
+    def test_the_tags_module_does_not_import_mutagen_when_it_is_imported(self) -> None:
+        code = (
+            "import sys\n"
+            "import jzr_tools.core.tags\n"
+            "import jzr_tools.commands.audio\n"
+            "loaded = sorted(m for m in sys.modules if m == 'mutagen' or m.startswith('mutagen.'))\n"
+            "print('@@LOADED@@' + ','.join(loaded))\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=PROJECT_ROOT,
+            env=_env(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        line = next(l for l in proc.stdout.splitlines() if l.startswith("@@LOADED@@"))
+        self.assertEqual(line, "@@LOADED@@")
+
+    def test_reading_the_tags_of_a_real_file_loads_mutagen(self) -> None:
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            self.skipTest("ffmpeg is not on PATH")
+        with tempfile.TemporaryDirectory(prefix="jzr-startup-tags-") as folder:
+            song = Path(folder) / "song.mp3"
+            subprocess.run(
+                [
+                    ffmpeg, "-v", "error", "-y", "-f", "lavfi",
+                    "-i", "sine=frequency=440:duration=1", "-c:a", "libmp3lame", str(song),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            obs = self.run_cli("audio", "tags", str(song))
+        self.assert_ok(obs)
+        self.assertTrue(obs.loaded("mutagen"), obs.describe())
+        self.assertIn("mp3", obs.stdout)
 
 
 class FfmpegStartupTests(_ObservedTestCase):

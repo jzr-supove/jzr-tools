@@ -53,6 +53,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr audio <from>2<to>` | Shorthand for a format pair, e.g. `jzr audio wav2mp3` |
 | `jzr audio info` | Show the format, streams and tags of audio files |
 | `jzr audio formats` | List audio targets, the ffmpeg in use and which encoders it has |
+| `jzr audio tags` | Show or edit tags, cover art and lyrics of MP3, M4A, FLAC, Ogg and Opus files |
 | `jzr ffmpeg install` | Download ffmpeg and ffprobe into jzr's own folder |
 | `jzr ffmpeg status` | Show which ffmpeg and ffprobe jzr uses and where they come from |
 | `jzr ffmpeg remove` | Delete the ffmpeg that `jzr ffmpeg install` downloaded |
@@ -154,8 +155,8 @@ use, and whether ImageMagick was found on `PATH`.
 
 ## Video and Audio
 
-`jzr video` and `jzr audio` use ffmpeg and ffprobe. jzr does not ship them,
-but it can fetch them for you:
+`jzr video` and `jzr audio` use ffmpeg and ffprobe, except `jzr audio tags`,
+which needs neither. jzr does not ship them, but it can fetch them for you:
 
 ```bash
 jzr ffmpeg install        # asks first; -y/--yes skips the question
@@ -320,6 +321,51 @@ Options: `-t/--to`, `-f/--from`, `-b/--bitrate` (kb/s, e.g. `128k`),
 - Output is written under a temporary `jzr-tmp-...` name and renamed when
   ffmpeg succeeds, so a failure or Ctrl+C leaves no partial file and never
   damages an existing one. On a terminal a progress line is shown on stderr.
+
+### Audio tags
+
+`jzr audio tags` shows and edits the tags of MP3, M4A, FLAC, Ogg Vorbis and
+Opus files in place. It reads and writes the tags with
+[mutagen](https://github.com/quodlibet/mutagen), so it needs no ffmpeg and
+never touches the audio itself.
+
+```bash
+jzr audio tags song.mp3                                  # print the tags
+jzr audio tags *.flac --json                             # one JSON array
+jzr audio tags song.mp3 --set "title=Song" -s artist=Band -s track=3/12
+jzr audio tags *.mp3 -s album=Record -s year=2020        # same change to every file
+jzr audio tags song.m4a --unset comment
+jzr audio tags song.opus --clear --set title=Song        # only the title is left
+jzr audio tags song.mp3 --cover front.jpg --lyrics words.txt
+jzr audio tags song.flac --no-cover
+jzr audio tags song.mp3 --export-cover front.jpg
+```
+
+- Keys: `title`, `artist`, `album`, `albumartist`, `year`, `track`, `disc`,
+  `genre`, `comment`, `composer`. `year` is `YYYY`, `YYYY-MM` or
+  `YYYY-MM-DD`; `track` and `disc` are `N` or `N/M`.
+- Printing shows the format, each tag that is set, the cover (type and size)
+  and how many lines of lyrics there are. A tag with several values is shown
+  joined with `; `.
+- `-s/--set KEY=VALUE` and `-u/--unset KEY` repeat; `--unset lyrics` removes
+  the lyrics. `--clear` removes every tag (including ones outside the list
+  above), the cover and the lyrics, and runs before the other changes.
+- `--cover IMAGE` embeds a JPEG or PNG (told apart by content, not by name)
+  as the front cover and replaces any picture already there; `--no-cover`
+  removes the pictures. `--lyrics FILE` embeds the lyrics from a UTF-8 text
+  file. `--export-cover FILE` writes the embedded cover out; the name must
+  end in `.jpg`/`.jpeg` or `.png` to match the picture, and an existing file
+  is not replaced.
+- The format is read from the file's content, so a file with the wrong
+  extension is still handled as what it is. MP3 tags are written as ID3v2.3,
+  which Windows Explorer and older players read best.
+- Edits are written to a temporary `jzr-tmp-...` copy next to the file,
+  which then replaces it, so a failed write leaves the file as it was. A
+  read-only file is refused.
+- Unknown keys, bad values and options that contradict each other are usage
+  errors (exit code 2) and change nothing. A file that cannot be read or
+  written fails on its own; the rest are still handled and the exit code
+  is 1.
 
 ## Ports
 
