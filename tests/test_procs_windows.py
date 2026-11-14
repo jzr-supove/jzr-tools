@@ -1,9 +1,6 @@
-"""Acceptance tests for Windows support of ``host procs``
-(docs/features/windows-host-bind/spec.md, section "host procs").
+"""Acceptance tests for Windows support of ``host procs``.
 
-Seams assumed in production code (none exist yet; tests create them with
-``mock.patch.object(..., create=True)`` so each test fails on the missing
-behaviour and not on an AttributeError):
+Seams the tests patch in production code:
 
 ``jzr_tools.core.procs``
     ``_windows() -> bool``

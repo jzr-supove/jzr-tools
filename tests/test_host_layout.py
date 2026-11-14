@@ -1,8 +1,7 @@
 """Acceptance tests for the framed text layout of ``jzr host status``.
 
-These pin the rules in docs/features/host-status/spec.md ("Text output"), not
-a snapshot of any report: column spacing beyond what the spec states is left
-free.
+These pin the layout rules of the text output, not a snapshot of any report:
+column spacing beyond those rules is left free.
 """
 
 from __future__ import annotations

@@ -32,7 +32,7 @@ TOP_LEVEL_KEYS = {
     "battery",
 }
 
-# Facts about make_full() that the spec puts in the default view.
+# Facts about make_full() that the default view shows.
 DEFAULT_FACTS = [
     "atlas",
     "Fedora Linux 42",
@@ -60,7 +60,7 @@ DEFAULT_FACTS = [
     "4.5",
 ]
 
-# Facts that the spec lists as added by --detail.
+# Facts that only --detail adds.
 DETAIL_ONLY_FACTS = [
     "6.15.10-200.fc42.x86_64",
     "2026-11-10",

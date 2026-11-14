@@ -1,4 +1,4 @@
-"""Acceptance tests for ``jzr_tools.core.procs`` (docs/features/host-procs)."""
+"""Acceptance tests for ``jzr_tools.core.procs``."""
 
 from __future__ import annotations
 
@@ -366,7 +366,7 @@ class FakeProcess:
 
 @unittest.skipUnless(POSIX, "uses POSIX user and process semantics")
 class SnapshotTests(ProcsTestCase):
-    """Per the design: ``psutil.process_iter(attrs)`` + ``.info``, the current
+    """Relies on ``psutil.process_iter(attrs)`` + ``.info``; the current
     process is ``psutil.Process()`` with ``.parents()`` and ``.username()``, and
     root is ``procs._is_root()``. ``procs._swap_share(pid)`` is patched (``None``
     by default) so real /proc data of look-alike PIDs never leaks in."""
@@ -909,7 +909,7 @@ class KillProcessesTests(SignalTests, unittest.TestCase):
 
 
 # --------------------------------------------------------------------------
-# Real processes (acceptance criterion 8)
+# Real processes
 # --------------------------------------------------------------------------
 
 IGNORE_TERM = (

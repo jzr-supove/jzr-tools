@@ -1,4 +1,4 @@
-"""Acceptance tests for slugify / kebab bug fixes (spec section B)."""
+"""Acceptance tests for slugify / kebab bug fixes."""
 
 from __future__ import annotations
 

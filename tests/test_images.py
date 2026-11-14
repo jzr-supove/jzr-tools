@@ -1,4 +1,4 @@
-"""Acceptance tests for image conversion bug fixes (spec section A)."""
+"""Acceptance tests for image conversion bug fixes."""
 
 from __future__ import annotations
 

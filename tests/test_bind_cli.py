@@ -39,7 +39,7 @@ EMPTY_LIST_MESSAGE = "No bindings yet. Add one with: jzr bind add NAME COMMAND..
 
 ARGV_PRINTER = "import sys; print(sys.argv[1:]); sys.exit(3)"
 
-# `describe` quotes the way the platform's own shell does (docs/features/windows-host-bind).
+# `describe` quotes the way the platform's own shell does.
 QUOTED_HELLO_WORLD = '"hello world"' if os.name == "nt" else "'hello world'"
 
 

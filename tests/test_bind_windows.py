@@ -1,9 +1,6 @@
-"""Acceptance tests for Windows support of ``jzr bind``
-(docs/features/windows-host-bind/spec.md, section "bind").
+"""Acceptance tests for Windows support of ``jzr bind``.
 
-Seams assumed in production code (none exist yet; tests create them with
-``mock.patch.object(..., create=True)`` so each test fails on the missing
-behaviour and not on an AttributeError):
+Seams the tests patch in production code:
 
 ``jzr_tools.core.bindings``
     ``_windows() -> bool``

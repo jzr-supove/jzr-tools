@@ -136,7 +136,7 @@ class ModuleSurfaceTests(unittest.TestCase):
                 "docker-build-cache", "uv", "pip", "npm", "cargo", "thumbnails",
                 "go-build", "yarn", "pnpm", "node-gyp", "mesa-shaders", "trash",
                 "docker-containers", "docker-images", "journal", "dnf", "apt",
-                # Windows items: --only is the same on every system (spec, host clean)
+                # Windows items: --only is the same on every system
                 "gpu-shaders", "temp", "crash-dumps", "windows-temp", "windows-update",
             },
         )
@@ -496,8 +496,7 @@ class ScanRootTests(CleanupCase):
         super().setUp()
         self.journal_output = JOURNAL_SAMPLE
         self.installed.update({"journalctl", "dnf", "apt-get"})
-        # The spec says the system paths are module constants; their names are
-        # not in the design, so these are the names this suite assumes.
+        # The system paths are module constants; these are their names.
         self.dnf_dirs = (self.root / "var" / "cache" / "libdnf5", self.root / "var" / "cache" / "dnf")
         self.apt_dirs = (self.root / "var" / "cache" / "apt" / "archives",)
         for patcher in (
@@ -634,7 +633,7 @@ class DirectorySizeTests(CleanupCase):
     @unittest.skipIf(
         os.name == "nt",
         "hard links are not de-duplicated on Windows: scandir reports no link counts there "
-        "and an lstat per file made sizing the uv cache 10x slower (spec, Sizes)",
+        "and an lstat per file made sizing the uv cache 10x slower",
     )
     def test_hard_links_are_counted_once(self) -> None:
         directory = self.root / "d"

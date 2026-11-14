@@ -1,7 +1,6 @@
-"""Acceptance tests for the Pillow image engine (docs/features/image-pillow/spec.md).
+"""Acceptance tests for the Pillow image engine.
 
-Items are referenced as P1-P14 (Pillow engine), M1 (ImageMagick signature check)
-and F (`jzr image formats`). Fixtures are built with Pillow itself and every
+Fixtures are built with Pillow itself and every
 output is verified by reopening it with Pillow or by reading magic bytes, so the
 tests do not depend on what is installed on PATH (except where marked).
 """
@@ -352,7 +351,7 @@ class FormatsOutputTests(unittest.TestCase):
         self.assertNotIn("cannot write", combined(result))
 
 
-# --------------------------------------------------------------------------- P1
+# --------------------------------------------------------------------------- output format
 
 
 class OutputFormatTests(TempDirTestCase):
@@ -410,7 +409,7 @@ class OutputFormatTests(TempDirTestCase):
                 self.assertTrue(near(sample(converted, 5 / 6, "RGB"), BLUE, 40))
 
 
-# --------------------------------------------------------------------------- P2
+# --------------------------------------------------------------------------- transparency
 
 
 def transparency_fixture(kind: str) -> tuple[Image.Image, list[tuple[int, ...]]]:
@@ -475,7 +474,7 @@ class TransparencyTests(TempDirTestCase):
                 self.assertGreater(sample(output, 1 / 2)[3], 215)
 
 
-# --------------------------------------------------------------------------- P3
+# --------------------------------------------------------------------------- orientation
 
 
 class OrientationTests(TempDirTestCase):
@@ -550,7 +549,7 @@ class OrientationTests(TempDirTestCase):
         self.assertTrue(near(output.convert("RGB").getpixel((4, 8)), RED, 30))
 
 
-# --------------------------------------------------------------------------- P4
+# --------------------------------------------------------------------------- metadata
 
 
 def icc_profile() -> bytes:
@@ -617,7 +616,7 @@ class MetadataTests(TempDirTestCase):
                 self.assertEqual(output.info.get("icc_profile"), profile)
 
 
-# --------------------------------------------------------------------------- P5
+# --------------------------------------------------------------------------- quality
 
 
 LOSSY = ("jpg", "jpeg", "webp", "avif", "heic", "heif")
@@ -686,7 +685,7 @@ class QualityTests(TempDirTestCase):
                 self.assertEqual(result.exit_code, 2)
 
 
-# --------------------------------------------------------------------------- P6
+# --------------------------------------------------------------------------- colour modes
 
 
 class ColourModeTests(TempDirTestCase):
@@ -756,7 +755,7 @@ class ColourModeTests(TempDirTestCase):
                 self.assertLessEqual(black, 15, values)
 
 
-# --------------------------------------------------------------------------- P7
+# --------------------------------------------------------------------------- animation
 
 
 def animated_frames(path: Path, durations: list[int], loop: int = 2) -> None:
@@ -844,7 +843,7 @@ class AnimationTests(TempDirTestCase):
         self.assertEqual(getattr(opened(self.root / "anim.png"), "n_frames", 1), 1)
 
 
-# --------------------------------------------------------------------------- P8
+# --------------------------------------------------------------------------- safe writes
 
 
 class SafeWriteTests(TempDirTestCase):
@@ -926,7 +925,7 @@ class SafeWriteTests(TempDirTestCase):
         self.assertEqual(listing(self.root), ["a.jpg", "a.png"])
 
 
-# --------------------------------------------------------------------------- P9
+# --------------------------------------------------------------------------- unreadable sources
 
 
 class UnreadableSourceTests(TempDirTestCase):
@@ -963,7 +962,7 @@ class UnreadableSourceTests(TempDirTestCase):
         self.assertFalse((self.root / "x.jpg").exists())
 
 
-# --------------------------------------------------------------------------- P10
+# --------------------------------------------------------------------------- content over extension
 
 
 class ContentOverExtensionTests(TempDirTestCase):
@@ -994,7 +993,7 @@ class ContentOverExtensionTests(TempDirTestCase):
                 self.assertTrue(near(sample(output, 5 / 6, "RGB"), BLUE, 40))
 
 
-# --------------------------------------------------------------------------- P11
+# --------------------------------------------------------------------------- literal names
 
 
 class LiteralNameTests(TempDirTestCase):
@@ -1061,7 +1060,7 @@ class LiteralNameTests(TempDirTestCase):
         self.assertNotIn("renamed", combined(dry))
 
 
-# --------------------------------------------------------------------------- P12
+# --------------------------------------------------------------------------- large images
 
 
 class LargeImageTests(TempDirTestCase):
@@ -1093,7 +1092,7 @@ class LargeImageTests(TempDirTestCase):
             self.assertEqual(opened(self.out / "big.png").size, (side, side))
 
 
-# --------------------------------------------------------------------------- P13
+# --------------------------------------------------------------------------- dry run
 
 
 class DryRunTests(TempDirTestCase):
@@ -1151,7 +1150,7 @@ class DryRunTests(TempDirTestCase):
                 self.assertNotIn("Print commands without running them", text)
 
 
-# --------------------------------------------------------------------------- P14
+# --------------------------------------------------------------------------- lazy imports
 
 
 class ImportLaziness(TempDirTestCase):
@@ -1237,7 +1236,7 @@ class ImportLaziness(TempDirTestCase):
         self.assertTrue((self.root / "a.jpg").is_file())
 
 
-# --------------------------------------------------------------------------- M1
+# --------------------------------------------------------------------------- magick signature check
 
 
 def fake_magick_writing(data: bytes):  # noqa: ANN201

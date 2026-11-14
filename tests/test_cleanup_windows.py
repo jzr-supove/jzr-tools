@@ -1,12 +1,12 @@
 """Acceptance tests for the Windows behaviour of ``jzr_tools.core.cleanup``.
 
-Spec: docs/features/windows-host-bind/spec.md, "host clean". The platform, the
-shell API, elevation, ``shutil.which`` and the subprocess runner are faked, so
-these tests run on Windows and on Linux. Directories are real throwaway trees;
-``LOCALAPPDATA``, ``TEMP`` and ``SystemRoot`` point into them.
+The platform, the shell API, elevation, ``shutil.which`` and the subprocess
+runner are faked, so these tests run on Windows and on Linux. Directories are
+real throwaway trees; ``LOCALAPPDATA``, ``TEMP`` and ``SystemRoot`` point into
+them.
 
-Seams assumed in ``jzr_tools.core.cleanup`` (all looked up at call time, so the
-tests patch them with ``create=True``; production code does not have them yet):
+Seams in ``jzr_tools.core.cleanup`` (all looked up at call time, so the tests
+can patch them):
 
 * ``_windows() -> bool``           whether to behave as on Windows. Everything that
                                    differs per system (the item list, ``Item.action``
@@ -21,7 +21,7 @@ tests patch them with ``create=True``; production code does not have them yet):
 * ``Outcome.in_use: int = 0``      how many files were left because a program held
                                    them open.
 
-Already existing and reused: ``_capture``, ``_execute``, ``_is_root``,
+Also used: ``_capture``, ``_execute``, ``_is_root``,
 ``shutil.which``, ``scan(home=, environ=)``, ``clean(item, ask_password=)``.
 On Windows (``_windows()`` true) ``shutil.which`` is the only source of command
 paths; on Linux the bare tool names stay as they are.
