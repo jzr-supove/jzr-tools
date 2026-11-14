@@ -14,9 +14,9 @@ from pathlib import Path
 
 from jzr_tools.core import ffmpeg
 from jzr_tools.core.batch import ConversionResult
-from jzr_tools.core.media import AudioPlan, MediaError, MediaInfo
+from jzr_tools.core.media import MediaError, MediaInfo, Plan
 
-Planner = Callable[[MediaInfo], AudioPlan]
+Planner = Callable[[MediaInfo], Plan]
 
 
 def _same_file(source: Path, target: Path) -> bool:

@@ -45,6 +45,8 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr image convert` | Convert images between formats, one file or a whole directory |
 | `jzr image <from>2<to>` | Shorthand for a format pair, e.g. `jzr image png2jpg` |
 | `jzr image formats` | List supported extensions and the conversion engines available |
+| `jzr video convert` | Convert video to mp4, mov, mkv or webm, or take the sound out as audio |
+| `jzr video <from>2<to>` | Shorthand for a format pair, e.g. `jzr video mov2mp4` |
 | `jzr video info` | Show the container, duration, size and streams of video files |
 | `jzr video formats` | List video targets, the ffmpeg in use and which encoders it has |
 | `jzr audio convert` | Convert audio files to mp3, m4a, opus, ogg, flac or wav |
@@ -218,6 +220,66 @@ jzr audio info song.mp3
 ffmpeg and ffprobe are used, their versions and where they were found, and
 which of the encoders jzr uses this ffmpeg build has. Include their output
 when reporting a problem.
+
+### Video conversion
+
+`jzr video convert` turns video files into `mp4`, `mov`, `mkv` or `webm`, or
+takes their sound out as `mp3`, `m4a`, `opus`, `ogg`, `flac` or `wav`. It
+picks its sources and outputs the way `jzr audio convert` does:
+
+```bash
+jzr video convert clip.mov --to mp4                # one file
+jzr video convert clip.mov -o out/clip.webm        # named output; --to not needed
+jzr video convert *.mkv --to mp4 --outdir mp4
+jzr video convert --to mp4 -d ~/Videos -r          # every video file under a directory
+jzr video convert clip.mp4 --to mp4 --codec h264 -o plays-everywhere.mp4
+jzr video convert clip.mov --to mp4 --resize 720 --fps 30
+jzr video mov2mp4 clip                             # pair shorthand; extension optional
+jzr video mp42mp3 talk.mp4                         # the sound only
+```
+
+Options: `-t/--to`, `-f/--from`, `-c/--codec` (`h264`, `hevc`, `av1`,
+`vp9`), `-q/--quality` (`high`, `balanced`, `small`; default `balanced`),
+`--crf N`, `--resize N`, `--fps N`, `--no-audio`, `-b/--bitrate` (audio
+targets), `-d/--dir`, `-p/--pattern`, `-r/--recursive`, `-o/--output`,
+`--outdir`, `--overwrite`, `--dry-run`.
+
+- Each stream is copied when the target container can hold its codec, which
+  is quick and loses nothing (`clip.mov -> clip.mp4 (video copied, audio
+  copied)`). What does not fit is encoded to the container's default: H.264
+  and AAC for `mp4`, `mov` and `mkv`, VP9 and Opus for `webm`.
+- `--codec` always encodes the video with that codec; the audio is still
+  copied when it fits. A codec the container cannot hold is refused
+  (`webm` takes `vp9` and `av1`, `mov` takes `h264` and `hevc`).
+- `--quality` and `--crf` set the encoder's constant quality (lower CRF is
+  better and bigger). They only matter when the video is encoded; when it is
+  copied, the result line says so.
+- `--resize N` scales the short edge down to N pixels (never up, even
+  sizes), and `--fps N` lowers the frame rate; both make the video encode,
+  unless the source is already that small or slow.
+- Encoded H.264 is 8-bit 4:2:0 so that every player opens it; HEVC in
+  `mp4`/`mov` is tagged `hvc1` for Apple players. `mp4` and `mov` outputs
+  have their index at the front, so they start playing before they are
+  fully downloaded. An HDR source encoded to H.264 is not tone-mapped and
+  looks washed out; the result line warns about it.
+- Rotation is kept: a copied stream keeps its rotation flag, an encoded one
+  is turned upright.
+- The best video stream and the audio stream with the most channels are
+  used. Other audio tracks, subtitles and cover art are left out, and the
+  result line names them. Tags are kept.
+- An audio target works like `jzr audio convert` on the video's sound: AAC
+  goes into `.m4a` untouched, and `--bitrate` applies. The video options are
+  refused with it, and a video with no audio track fails with
+  `no audio track`.
+- Scanning a directory picks video files (`mp4 m4v mov mkv webm avi wmv flv
+  mpg mpeg ts mts m2ts 3gp ogv`) that are not already in the target
+  container.
+- A file that cannot be read, or that needs an encoder this ffmpeg build
+  lacks (`this ffmpeg build has no libx265 encoder`), fails on its own; the
+  rest still convert and the exit code is 1. `jzr video formats` shows
+  which encoders the build has.
+- `--dry-run`, the temporary `jzr-tmp-...` output and the progress line work
+  as in `jzr audio convert`.
 
 ### Audio conversion
 

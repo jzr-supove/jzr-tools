@@ -487,11 +487,14 @@ class AudioOptions:
 
 
 @dataclass(frozen=True)
-class AudioPlan:
+class Plan:
     # ffmpeg arguments between ``-i <source>`` and the output path.
     args: tuple[str, ...]
     # What happened, for the result line: ``audio copied``.
     note: str
+
+
+AudioPlan = Plan
 
 
 def bitrate_caveat(target_ext: str) -> str | None:
@@ -525,7 +528,7 @@ def _encoder_args(target: str, stream: AudioStream, bitrate: str | None) -> tupl
     raise ValueError(f"not an audio target: {target}")
 
 
-def plan_audio_convert(info: MediaInfo, target_ext: str, options: AudioOptions) -> AudioPlan:
+def plan_audio_convert(info: MediaInfo, target_ext: str, options: AudioOptions) -> Plan:
     """Decide how to turn ``info``'s first audio stream into ``target_ext``.
 
     The stream is copied when the target holds its codec and no bitrate was
@@ -570,4 +573,279 @@ def plan_audio_convert(info: MediaInfo, target_ext: str, options: AudioOptions) 
 
     if has_cover and target not in _COVER_TARGETS:
         note += f"; cover art dropped: .{target} cannot hold it"
-    return AudioPlan(tuple(args), note)
+    return Plan(tuple(args), note)
+
+
+# --- video conversion ----------------------------------------------------------
+
+# Extensions read as video when scanning a directory or naming a pair command.
+VIDEO_EXTENSIONS = frozenset(
+    {
+        "mp4", "m4v", "mov", "mkv", "webm", "avi", "wmv", "flv",
+        "mpg", "mpeg", "ts", "mts", "m2ts", "3gp", "ogv",
+    }
+)
+VIDEO_CODECS = ("h264", "hevc", "av1", "vp9")
+VIDEO_QUALITIES = ("high", "balanced", "small")
+
+# Video codecs each container holds as they are, so they are copied.
+_VIDEO_COPYABLE = {
+    "mp4": frozenset({"h264", "hevc", "av1", "vp9", "mpeg4"}),
+    "mov": frozenset({"h264", "hevc", "mpeg4", "prores", "mjpeg"}),
+    "mkv": frozenset(
+        {"h264", "hevc", "av1", "vp8", "vp9", "mpeg4", "mpeg2video", "prores", "mjpeg", "theora"}
+    ),
+    "webm": frozenset({"vp8", "vp9", "av1"}),
+}
+_VIDEO_AUDIO_COPYABLE = {
+    "mp4": frozenset({"aac", "mp3", "opus", "flac", "alac", "ac3", "eac3"}),
+    "mov": frozenset(
+        {"aac", "mp3", "alac", "ac3", "pcm_s16le", "pcm_s24le", "pcm_s16be", "pcm_s24be"}
+    ),
+    "mkv": frozenset(
+        {
+            "aac", "mp3", "opus", "vorbis", "flac", "alac", "ac3", "eac3",
+            "dts", "truehd", "pcm_s16le", "pcm_s24le",
+        }
+    ),
+    "webm": frozenset({"opus", "vorbis"}),
+}
+# What `--codec` may put in each container, in the order the error lists them.
+_CONTAINER_CODECS = {
+    "mp4": ("h264", "hevc", "av1", "vp9"),
+    "mov": ("h264", "hevc"),
+    "mkv": ("h264", "hevc", "av1", "vp9"),
+    "webm": ("vp9", "av1"),
+}
+# Codecs a container gets when its source streams do not fit.
+_CONTAINER_DEFAULTS = {
+    "mp4": ("h264", "aac"),
+    "mov": ("h264", "aac"),
+    "mkv": ("h264", "aac"),
+    "webm": ("vp9", "opus"),
+}
+# Constant-quality level per codec for high, balanced and small; then the
+# highest value the encoder takes.
+_CRF = {
+    "h264": ((18, 23, 28), 51),
+    "hevc": ((22, 26, 30), 51),
+    "av1": ((24, 32, 40), 63),
+    "vp9": ((24, 32, 40), 63),
+}
+_VIDEO_AUDIO_ENCODERS = {
+    "aac": ("-c:a", "aac", "-b:a", "192k"),
+    "opus": ("-c:a", "libopus", "-b:a", "128k"),
+}
+_FAST_START = frozenset({"mp4", "mov"})
+
+
+@dataclass(frozen=True)
+class VideoOptions:
+    # ``None`` copies the video when the container can hold it.
+    codec: str | None = None
+    # ``None`` means not given, which encodes at ``balanced``.
+    quality: str | None = None
+    crf: int | None = None
+    # Short edge in pixels; never scales up.
+    resize: int | None = None
+    fps: float | None = None
+    no_audio: bool = False
+
+
+def _target(target_ext: str) -> str:
+    return target_ext.strip().lstrip(".").lower()
+
+
+def check_convert_options(
+    target_ext: str, options: VideoOptions, *, bitrate: str | None = None
+) -> None:
+    """Reject option combinations that no file could satisfy.
+
+    Raises ``ValueError`` with the message for the user.
+    """
+    target = _target(target_ext)
+    if target in _COPYABLE:
+        given = (
+            ("--codec", options.codec is not None),
+            ("--quality", options.quality is not None),
+            ("--crf", options.crf is not None),
+            ("--resize", options.resize is not None),
+            ("--fps", options.fps is not None),
+            ("--no-audio", options.no_audio),
+        )
+        for name, present in given:
+            if present:
+                raise ValueError(f"{name} applies only to video targets, not .{target}")
+        return
+    if target not in _CONTAINER_CODECS:
+        raise ValueError(f"not a video or audio target: {target_ext}")
+
+    if bitrate is not None:
+        raise ValueError(f"--bitrate applies only to audio targets, not .{target}")
+    if options.crf is not None and options.quality is not None:
+        raise ValueError("--crf and --quality cannot be used together")
+    allowed = _CONTAINER_CODECS[target]
+    if options.codec is not None and options.codec not in allowed:
+        raise ValueError(
+            f".{target} cannot hold {options.codec}; choose from {', '.join(allowed)}"
+        )
+    codec = options.codec or _CONTAINER_DEFAULTS[target][0]
+    highest = _CRF[codec][1]
+    if options.crf is not None and not 0 <= options.crf <= highest:
+        raise ValueError(f"--crf for {codec} goes from 0 to {highest}")
+
+
+def _even_down(value: int) -> int:
+    return value - value % 2
+
+
+def _even_round(value: float) -> int:
+    return max(2, round(value / 2) * 2)
+
+
+def _deep_pixels(pixel_format: str | None) -> bool:
+    return bool(pixel_format) and ("10" in pixel_format or "12" in pixel_format)
+
+
+def _best_audio(streams: tuple[AudioStream, ...]) -> AudioStream | None:
+    best: AudioStream | None = None
+    for stream in streams:
+        if best is None or (stream.channels or 0) > (best.channels or 0):
+            best = stream
+    return best
+
+
+def _audio_label(stream: AudioStream) -> str:
+    details = [value for value in (stream.codec, stream.language) if value]
+    label = f"audio stream {stream.index}"
+    return f"{label} ({', '.join(details)})" if details else label
+
+
+def _scale(video: VideoStream, resize: int | None) -> tuple[str | None, bool]:
+    """Return the ``scale=W:H`` filter for an encode, and whether ``resize``
+    changes the picture."""
+    if not video.width or not video.height:
+        return None, False
+    width, height = video.width, video.height
+    # An encode is turned upright before the filters run, so they see the
+    # picture as displayed.
+    if video.rotation in (90, 270):
+        width, height = height, width
+    short, long = min(width, height), max(width, height)
+    if resize is not None and short > resize:
+        new_short = _even_down(resize)
+        new_long = _even_round(long * resize / short)
+        if width <= height:
+            return f"scale={new_short}:{new_long}", True
+        return f"scale={new_long}:{new_short}", True
+    if width % 2 or height % 2:
+        return f"scale={_even_down(width)}:{_even_down(height)}", False
+    return None, False
+
+
+def plan_convert(info: MediaInfo, target_ext: str, options: VideoOptions) -> Plan:
+    """Decide how to turn ``info`` into the video container ``target_ext``.
+
+    Each stream is copied when the container holds its codec, otherwise
+    encoded to the container's default; ``--codec``, a real resize or a
+    lower frame rate force a video encode.
+    """
+    target = _target(target_ext)
+    if target not in _CONTAINER_CODECS:
+        raise ValueError(f"not a video container: {target_ext}")
+    video = info.video
+    if video is None:
+        raise MediaError("no video track")
+    audio = None if options.no_audio else _best_audio(info.audio)
+    default_video, default_audio = _CONTAINER_DEFAULTS[target]
+    notes: list[str] = []
+
+    resize_changes = False
+    if options.resize is not None:
+        _, resize_changes = _scale(video, options.resize)
+    fps_changes = (
+        options.fps is not None and video.fps is not None and video.fps > options.fps
+    )
+    encode = (
+        options.codec is not None
+        or resize_changes
+        or fps_changes
+        or video.codec not in _VIDEO_COPYABLE[target]
+    )
+
+    args: list[str] = ["-map", f"0:{video.index}"]
+    if audio is not None:
+        args += ["-map", f"0:{audio.index}"]
+
+    if encode:
+        codec = options.codec or default_video
+        filters: list[str] = []
+        if fps_changes:
+            filters.append(f"fps={_number(options.fps)}")
+        scale, _ = _scale(video, options.resize)
+        if scale is not None:
+            filters.append(scale)
+        if filters:
+            args += ["-vf", ",".join(filters)]
+        levels, _ = _CRF[codec]
+        crf = options.crf
+        if crf is None:
+            crf = levels[VIDEO_QUALITIES.index(options.quality or "balanced")]
+        pixels = "yuv420p10le" if codec != "h264" and _deep_pixels(video.pixel_format) else "yuv420p"
+        args += ["-c:v", VIDEO_ENCODERS[codec], "-crf", str(crf)]
+        if codec == "vp9":
+            args += ["-b:v", "0"]
+        args += ["-pix_fmt", pixels]
+        if codec == "hevc":
+            args += ["-x265-params", "log-level=error"]
+        elif codec == "vp9":
+            args += ["-row-mt", "1", "-cpu-used", "4"]
+        out_codec = codec
+        summary = f"video encoded to {codec}"
+    else:
+        args += ["-c:v", "copy"]
+        out_codec = video.codec
+        summary = "video copied"
+    if out_codec == "hevc" and target in _FAST_START:
+        # Apple players only open HEVC in MP4 under this tag.
+        args += ["-tag:v", "hvc1"]
+
+    if audio is not None:
+        if audio.codec in _VIDEO_AUDIO_COPYABLE[target]:
+            args += ["-c:a", "copy"]
+            summary += ", audio copied"
+        else:
+            args += _VIDEO_AUDIO_ENCODERS[default_audio]
+            summary += f", audio encoded to {default_audio}"
+    elif options.no_audio and info.audio:
+        summary += ", audio dropped"
+    notes.append(summary)
+
+    if _container_names(info) & {"mp4", "mov"} and target not in _FAST_START:
+        for key in _MP4_BRAND_TAGS:
+            args += ["-metadata", f"{key}="]
+    if target in _FAST_START:
+        args += ["-movflags", "+faststart"]
+
+    dropped: list[str] = []
+    if not options.no_audio:
+        dropped += [_audio_label(s) for s in info.audio if s is not audio]
+    dropped += [label for label in info.extra if not label.startswith("data stream")]
+    if info.cover_art:
+        dropped.append("cover art")
+    if dropped:
+        notes.append("dropped: " + ", ".join(dropped))
+
+    if not encode:
+        if options.crf is not None:
+            notes.append("--crf applies only when re-encoding")
+        if options.quality is not None:
+            notes.append("--quality applies only when re-encoding")
+    if options.resize is not None and not resize_changes:
+        notes.append(f"already {options.resize} px or smaller; not resized")
+    if options.fps is not None and not fps_changes:
+        notes.append(f"already {_number(options.fps)} fps or less; frame rate kept")
+    if encode and out_codec == "h264" and video.hdr:
+        notes.append("HDR source: 8-bit H.264 will look washed out")
+
+    return Plan(tuple(args), "; ".join(notes))
