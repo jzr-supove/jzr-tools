@@ -21,6 +21,7 @@ from jzr_tools.commands._batch import (
     check_output,
     compile_pattern,
     report,
+    require_tools,
     summarize,
 )
 from jzr_tools.commands._media import (
@@ -54,10 +55,11 @@ class AudioGroup(click.Group):
 def app() -> None:
     """Work with audio files.
 
-    Needs ffmpeg and ffprobe: set JZR_FFMPEG and JZR_FFPROBE to use a
-    particular copy, otherwise they are taken from PATH. Besides the commands
-    below, any format pair works as a command: 'jzr audio wav2mp3 song.wav'
-    is short for 'jzr audio convert song.wav --from wav --to mp3'.
+    Needs ffmpeg and ffprobe: `jzr ffmpeg install` downloads them, and a
+    command that finds none offers to. JZR_FFMPEG and JZR_FFPROBE pick a
+    particular copy; PATH is used when jzr has none of its own. Besides the
+    commands below, any format pair works as a command: 'jzr audio wav2mp3
+    song.wav' is short for 'jzr audio convert song.wav --from wav --to mp3'.
     """
 
 
@@ -146,11 +148,7 @@ def _convert(
         click.echo("No matching files.", err=True)
         raise click.exceptions.Exit(1)
 
-    try:
-        tools = ffmpeg.locate()
-    except media.MissingToolError as error:
-        click.echo(str(error), err=True)
-        raise click.exceptions.Exit(1) from error
+    tools = ffmpeg.Tools(*require_tools("ffmpeg", "ffprobe"))
 
     if bitrate is not None:
         caveat = media.bitrate_caveat(target_extension)

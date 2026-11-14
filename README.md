@@ -51,6 +51,9 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr audio <from>2<to>` | Shorthand for a format pair, e.g. `jzr audio wav2mp3` |
 | `jzr audio info` | Show the format, streams and tags of audio files |
 | `jzr audio formats` | List audio targets, the ffmpeg in use and which encoders it has |
+| `jzr ffmpeg install` | Download ffmpeg and ffprobe into jzr's own folder |
+| `jzr ffmpeg status` | Show which ffmpeg and ffprobe jzr uses and where they come from |
+| `jzr ffmpeg remove` | Delete the ffmpeg that `jzr ffmpeg install` downloaded |
 | `jzr text slug` | Turn text into a URL-safe slug |
 | `jzr text kebab` | Turn text into lowercase kebab-case, optionally dated and copied |
 | `jzr port show` | Show which processes are using a local port |
@@ -149,10 +152,47 @@ use, and whether ImageMagick was found on `PATH`.
 
 ## Video and Audio
 
-`jzr video` and `jzr audio` use ffmpeg and ffprobe. They are taken from
-`PATH`; set `JZR_FFMPEG` and `JZR_FFPROBE` to the programs' paths to use a
-particular copy instead. When neither is found the command says so and exits
-with code 1. To install ffmpeg:
+`jzr video` and `jzr audio` use ffmpeg and ffprobe. jzr does not ship them,
+but it can fetch them for you:
+
+```bash
+jzr ffmpeg install        # asks first; -y/--yes skips the question
+jzr ffmpeg status         # which ffmpeg is used, its version, where it came from
+jzr ffmpeg remove         # delete jzr's copy
+```
+
+`jzr ffmpeg install` says what it will download, from where, how big it is
+and where it goes, then puts ffmpeg and ffprobe in jzr's own folder:
+`%LOCALAPPDATA%\jzr\ffmpeg` on Windows, `~/Library/Application Support/jzr/ffmpeg`
+on macOS, `$XDG_DATA_HOME/jzr/ffmpeg` (default `~/.local/share/jzr/ffmpeg`)
+elsewhere. Set `JZR_DATA_DIR` to use another folder. It needs no admin rights
+and changes nothing else on the system, PATH included. Run it again to update.
+
+- Windows and Linux (x64, arm64) get the `gpl-shared` build of the newest
+  ffmpeg release from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds);
+  macOS (Apple silicon, Intel) gets the release build from
+  [ffmpeg.martin-riedl.de](https://ffmpeg.martin-riedl.de). Only ffmpeg,
+  ffprobe and the libraries they load are kept (about 180 MB on Windows,
+  from an 86 MB download).
+- Each download is checked against the SHA-256 checksum its source
+  publishes next to it. That catches a broken or cut-off download; it does
+  not protect against the source itself being compromised, since the
+  checksum comes from the same place.
+- The new copy is run once before it replaces the old one. A failed
+  download, a checksum mismatch or an archive that tries to write outside
+  its folder installs nothing and leaves the previous copy as it was.
+- jzr goes to the network only inside `jzr ffmpeg install` (or when you say
+  yes to the offer below): no update checks, nothing sent besides the
+  download requests.
+
+ffmpeg and ffprobe are looked for in this order: `JZR_FFMPEG` and
+`JZR_FFPROBE` (paths to the programs), then jzr's own copy, then `PATH`.
+When a command finds none and you are at a terminal, it offers to run the
+install and then carries on. In a script or pipe it asks nothing, prints
+`ffmpeg was not found. Run: jzr ffmpeg install` and exits with code 1.
+
+On a machine with no known build (32-bit, BSD), install ffmpeg yourself and
+it is found on `PATH`:
 
 ```bash
 winget install Gyan.FFmpeg     # Windows

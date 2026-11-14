@@ -18,7 +18,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = PROJECT_ROOT / "src"
 
-LAZY_NAMES = {"image", "text", "port", "killport", "host", "bind", "video", "audio"}
+LAZY_NAMES = {"image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg"}
 BOX_CHARS = ("╭", "│", "╰", "─")
 
 _RUNNER = """
@@ -361,8 +361,17 @@ class RegistryTests(unittest.TestCase):
         ):
             self.assertIsNone(self.app.get_command(ctx, "nope"))
 
+    def test_ffmpeg_group_is_registered_with_the_groups_own_help(self) -> None:
+        import_path, help_text = self._lazy()["ffmpeg"]
+        self.assertEqual(help_text, "Install and check the ffmpeg jzr uses.")
+        module_name, _, attribute = import_path.partition(":")
+        self.assertTrue(module_name.startswith("jzr_tools.commands."), import_path)
+        self.assertEqual(attribute, "app")
+        command = self.app.get_command(self.click.Context(self.app), "ffmpeg")
+        self.assertEqual(command.get_short_help_str(limit=300), help_text)
+
     def test_lazy_commands_point_at_the_new_modules(self) -> None:
-        paths = {name: value[0] for name, value in self._lazy().items()}
+        paths = {name: value[0] for name, value in self._lazy().items() if name != "ffmpeg"}
         self.assertEqual(
             paths,
             {
@@ -380,6 +389,7 @@ class RegistryTests(unittest.TestCase):
 
 MEDIA_MODULES = [
     "jzr_tools.core.ffmpeg",
+    "jzr_tools.core.ffmpeg_install",
     "jzr_tools.core.media",
     "jzr_tools.commands.video",
     "jzr_tools.commands.audio",
@@ -442,6 +452,26 @@ class MediaStartupTests(_ObservedTestCase):
                 obs = self.run_cli(*args)
                 self.assert_ok(obs)
                 self.assertIn("Usage:", obs.stdout)
+
+
+class FfmpegStartupTests(_ObservedTestCase):
+    def test_root_help_lists_ffmpeg_with_its_help(self) -> None:
+        obs = self.run_cli("-h")
+        self.assert_ok(obs)
+        self.assertRegex(obs.stdout, r"(?m)^  ffmpeg\s+Install and check the ffmpeg jzr uses\.")
+
+    def test_group_help_lists_install_status_and_remove_without_the_network_stack(self) -> None:
+        obs = self.run_cli("ffmpeg", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertEqual(sorted(listed), ["install", "remove", "status"])
+        self.assert_not_loaded(obs, ["urllib.request", "jzr_tools.core.ffmpeg_install"] + HEAVY_MODULES)
+
+    def test_install_help_exits_zero_and_mentions_yes(self) -> None:
+        obs = self.run_cli("ffmpeg", "install", "-h")
+        self.assert_ok(obs)
+        self.assertIn("--yes", obs.stdout)
+        self.assertIn("-y", obs.stdout)
 
 
 class RootHelpTests(_ObservedTestCase):

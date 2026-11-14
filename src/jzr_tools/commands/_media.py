@@ -29,13 +29,10 @@ def info_command(*, tags: bool, help_text: str) -> click.Command:
     )
     @click.option("--json", "as_json", is_flag=True, help="Print one JSON array.")
     def command(files: tuple[Path, ...], as_json: bool) -> None:
+        from jzr_tools.commands._batch import require_tools
         from jzr_tools.core import ffmpeg, media
 
-        try:
-            tool = ffmpeg.locate_tool("ffprobe")
-        except media.MissingToolError as error:
-            click.echo(str(error), err=True)
-            raise click.exceptions.Exit(1) from error
+        (tool,) = require_tools("ffprobe")
 
         documents: list[dict[str, object]] = []
         failed = False

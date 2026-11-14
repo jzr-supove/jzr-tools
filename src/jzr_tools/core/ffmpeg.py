@@ -20,11 +20,16 @@ import re
 import secrets
 import shutil
 import subprocess
-import sys
 import tempfile
 import threading
 
-from jzr_tools.core.media import MediaError, MediaInfo, MissingToolError, parse_probe
+from jzr_tools.core.media import (
+    MediaError,
+    MediaInfo,
+    MissingToolError,
+    ToolNotFoundError,
+    parse_probe,
+)
 
 __all__ = [
     "OUTPUT",
@@ -34,6 +39,7 @@ __all__ = [
     "MissingToolError",
     "Progress",
     "Tool",
+    "ToolNotFoundError",
     "Tools",
     "command_lines",
     "encoders",
@@ -65,7 +71,7 @@ _ENVIRONMENT = {"ffmpeg": "JZR_FFMPEG", "ffprobe": "JZR_FFPROBE"}
 @dataclass(frozen=True)
 class Tool:
     path: str
-    # Where it was found: "environment" or "PATH".
+    # Where it was found: "environment", "jzr" (its own copy) or "PATH".
     origin: str
 
 
@@ -94,16 +100,11 @@ class Progress:
     speed: float | None
 
 
-def _install_advice() -> str:
-    if sys.platform == "win32":
-        return "winget install Gyan.FFmpeg"
-    if sys.platform == "darwin":
-        return "brew install ffmpeg"
-    return "sudo apt install ffmpeg"
-
-
 def locate_tool(name: str, environ: Mapping[str, str] | None = None) -> Tool:
-    """Find ``ffmpeg`` or ``ffprobe``: the environment variable, then PATH."""
+    """Find ``ffmpeg`` or ``ffprobe``: the environment variable, then the copy
+    ``jzr ffmpeg install`` made, then PATH."""
+    from jzr_tools.core import ffmpeg_install
+
     environ = os.environ if environ is None else environ
     variable = _ENVIRONMENT[name]
     configured = environ.get(variable)
@@ -112,11 +113,13 @@ def locate_tool(name: str, environ: Mapping[str, str] | None = None) -> Tool:
             raise MissingToolError(f"{variable} is set to {configured}, which is not a file")
         return Tool(configured, "environment")
 
+    own = ffmpeg_install.tool_path(name, environ)
+    if own.is_file():
+        return Tool(str(own), "jzr")
+
     found = shutil.which(name)
     if found is None:
-        raise MissingToolError(
-            f"{name} was not found. Install it ({_install_advice()}) or set {variable}."
-        )
+        raise ToolNotFoundError(f"{name} was not found. Run: jzr ffmpeg install")
     return Tool(found, "PATH")
 
 

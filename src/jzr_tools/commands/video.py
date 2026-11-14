@@ -16,8 +16,9 @@ from jzr_tools.core.media import VIDEO_TARGETS
 def app() -> None:
     """Work with video files.
 
-    Needs ffmpeg and ffprobe: set JZR_FFMPEG and JZR_FFPROBE to use a
-    particular copy, otherwise they are taken from PATH.
+    Needs ffmpeg and ffprobe: `jzr ffmpeg install` downloads them, and a
+    command that finds none offers to. JZR_FFMPEG and JZR_FFPROBE pick a
+    particular copy; PATH is used when jzr has none of its own.
     """
 
 

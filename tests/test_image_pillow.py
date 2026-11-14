@@ -266,7 +266,14 @@ class BackendSelectionTests(TempDirTestCase):
                 self.assertIn(
                     "Convert images between formats.", " ".join(result.stdout.split())
                 )
-                self.assertNotIn("ffmpeg", result.stdout)
+                # The root listing has an `ffmpeg` group of its own; only the
+                # image text must not offer ffmpeg as an image engine.
+                text = result.stdout
+                if args == ["-h"]:
+                    text = "\n".join(
+                        line for line in text.splitlines() if line.strip().startswith("image ")
+                    )
+                self.assertNotIn("ffmpeg", text)
 
     def test_unchanged_skip_rules_apply_to_the_pillow_engine(self) -> None:
         source = self.root / "a.png"

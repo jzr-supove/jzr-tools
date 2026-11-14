@@ -19,7 +19,7 @@ from jzr_tools.core import ffmpeg
 from jzr_tools.core.ffmpeg import OUTPUT, PASSLOG, Job, Tool, Tools
 from jzr_tools.core.media import MediaError, MissingToolError
 
-from media_fixtures import make_fake_tool, recorded_calls
+from media_fixtures import make_fake_tool, recorded_calls, tool_not_found_error
 
 WHICH = "jzr_tools.core.ffmpeg.shutil.which"
 POPEN = "jzr_tools.core.ffmpeg.subprocess.Popen"
@@ -40,13 +40,26 @@ class LocateTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.folder = Path(self._tmp.name)
+        # An empty jzr data folder, so a copy installed on this machine never leaks in.
+        self.data = self.folder / "data"
+        self.data.mkdir()
+        self.base = {"JZR_DATA_DIR": str(self.data)}
         self.ffmpeg_file = self.folder / "my-ffmpeg.exe"
         self.ffprobe_file = self.folder / "my-ffprobe.exe"
         self.ffmpeg_file.write_bytes(b"x")
         self.ffprobe_file.write_bytes(b"x")
 
+    def jzr_copy(self, name: str) -> Path:
+        """Put a file where jzr's own copy of ``name`` lives and return its path."""
+        from jzr_tools.core import ffmpeg_install
+
+        path = ffmpeg_install.tool_path(name, self.base)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+        return path
+
     def test_environment_wins_over_path(self) -> None:
-        environ = {"JZR_FFMPEG": str(self.ffmpeg_file), "JZR_FFPROBE": str(self.ffprobe_file)}
+        environ = {**self.base, "JZR_FFMPEG": str(self.ffmpeg_file), "JZR_FFPROBE": str(self.ffprobe_file)}
         with mock.patch(WHICH, side_effect=fake_which({"ffmpeg": "P/ffmpeg", "ffprobe": "P/ffprobe"})):
             tools = ffmpeg.locate(environ)
         self.assertEqual(tools.ffmpeg, Tool(str(self.ffmpeg_file), "environment"))
@@ -55,12 +68,12 @@ class LocateTests(unittest.TestCase):
     def test_path_is_used_when_the_environment_is_silent(self) -> None:
         found = {"ffmpeg": "C:/bin/ffmpeg.exe", "ffprobe": "C:/bin/ffprobe.exe"}
         with mock.patch(WHICH, side_effect=fake_which(found)):
-            tools = ffmpeg.locate({})
+            tools = ffmpeg.locate(self.base)
         self.assertEqual(tools.ffmpeg, Tool("C:/bin/ffmpeg.exe", "PATH"))
         self.assertEqual(tools.ffprobe, Tool("C:/bin/ffprobe.exe", "PATH"))
 
     def test_each_tool_is_resolved_on_its_own(self) -> None:
-        environ = {"JZR_FFMPEG": str(self.ffmpeg_file)}
+        environ = {**self.base, "JZR_FFMPEG": str(self.ffmpeg_file)}
         with mock.patch(WHICH, side_effect=fake_which({"ffprobe": "C:/bin/ffprobe.exe"})):
             tools = ffmpeg.locate(environ)
         self.assertEqual(tools.ffmpeg.origin, "environment")
@@ -70,13 +83,14 @@ class LocateTests(unittest.TestCase):
         missing = str(self.folder / "nope.exe")
         with mock.patch(WHICH, side_effect=fake_which({"ffmpeg": "P/ffmpeg", "ffprobe": "P/ffprobe"})):
             with self.assertRaises(MissingToolError) as caught:
-                ffmpeg.locate({"JZR_FFMPEG": missing})
+                ffmpeg.locate({**self.base, "JZR_FFMPEG": missing})
         self.assertEqual(str(caught.exception), f"JZR_FFMPEG is set to {missing}, which is not a file")
+        self.assertNotIsInstance(caught.exception, tool_not_found_error())
 
     def test_environment_pointing_at_a_folder_is_an_error(self) -> None:
         with mock.patch(WHICH, side_effect=fake_which({})):
             with self.assertRaises(MissingToolError) as caught:
-                ffmpeg.locate_tool("ffprobe", {"JZR_FFPROBE": str(self.folder)})
+                ffmpeg.locate_tool("ffprobe", {**self.base, "JZR_FFPROBE": str(self.folder)})
         self.assertEqual(
             str(caught.exception), f"JZR_FFPROBE is set to {self.folder}, which is not a file"
         )
@@ -84,35 +98,58 @@ class LocateTests(unittest.TestCase):
     def test_missing_ffmpeg_message(self) -> None:
         with mock.patch(WHICH, side_effect=fake_which({"ffprobe": "P/ffprobe"})):
             with self.assertRaises(MissingToolError) as caught:
-                ffmpeg.locate({})
-        message = str(caught.exception)
-        self.assertTrue(message.startswith("ffmpeg was not found"), message)
-        self.assertIn("JZR_FFMPEG", message)
-        self.assertTrue(
-            any(hint in message for hint in ("winget install Gyan.FFmpeg", "brew install ffmpeg", "sudo apt install ffmpeg")),
-            message,
-        )
+                ffmpeg.locate(self.base)
+        self.assertEqual(str(caught.exception), "ffmpeg was not found. Run: jzr ffmpeg install")
+        self.assertIsInstance(caught.exception, tool_not_found_error())
 
     def test_missing_ffprobe_message(self) -> None:
         with mock.patch(WHICH, side_effect=fake_which({"ffmpeg": "P/ffmpeg"})):
             with self.assertRaises(MissingToolError) as caught:
-                ffmpeg.locate({})
-        message = str(caught.exception)
-        self.assertTrue(message.startswith("ffprobe was not found"), message)
-        self.assertIn("JZR_FFPROBE", message)
+                ffmpeg.locate(self.base)
+        self.assertEqual(str(caught.exception), "ffprobe was not found. Run: jzr ffmpeg install")
+        self.assertIsInstance(caught.exception, tool_not_found_error())
 
     def test_locate_tool_finds_one_tool_without_needing_the_other(self) -> None:
         with mock.patch(WHICH, side_effect=fake_which({"ffprobe": "P/ffprobe"})):
-            tool = ffmpeg.locate_tool("ffprobe", {})
+            tool = ffmpeg.locate_tool("ffprobe", self.base)
             self.assertEqual(tool, Tool("P/ffprobe", "PATH"))
             with self.assertRaises(MissingToolError) as caught:
-                ffmpeg.locate_tool("ffmpeg", {})
-        self.assertTrue(str(caught.exception).startswith("ffmpeg was not found"))
+                ffmpeg.locate_tool("ffmpeg", self.base)
+        self.assertEqual(str(caught.exception), "ffmpeg was not found. Run: jzr ffmpeg install")
 
     def test_missing_tool_error_is_a_media_error(self) -> None:
         with mock.patch(WHICH, side_effect=fake_which({})):
             with self.assertRaises(MediaError):
-                ffmpeg.locate({})
+                ffmpeg.locate(self.base)
+
+    def test_jzr_copy_is_used_before_path(self) -> None:
+        copies = {name: self.jzr_copy(name) for name in ("ffmpeg", "ffprobe")}
+        with mock.patch(WHICH, side_effect=fake_which({"ffmpeg": "P/ffmpeg", "ffprobe": "P/ffprobe"})):
+            tools = ffmpeg.locate(self.base)
+        self.assertEqual(tools.ffmpeg, Tool(str(copies["ffmpeg"]), "jzr"))
+        self.assertEqual(tools.ffprobe, Tool(str(copies["ffprobe"]), "jzr"))
+
+    def test_jzr_copy_is_found_when_nothing_is_on_path(self) -> None:
+        copy = self.jzr_copy("ffprobe")
+        with mock.patch(WHICH, side_effect=fake_which({})):
+            self.assertEqual(ffmpeg.locate_tool("ffprobe", self.base), Tool(str(copy), "jzr"))
+
+    def test_environment_wins_over_the_jzr_copy(self) -> None:
+        self.jzr_copy("ffmpeg")
+        environ = {**self.base, "JZR_FFMPEG": str(self.ffmpeg_file)}
+        with mock.patch(WHICH, side_effect=fake_which({})):
+            tool = ffmpeg.locate_tool("ffmpeg", environ)
+        self.assertEqual(tool, Tool(str(self.ffmpeg_file), "environment"))
+
+    def test_jzr_copy_that_is_not_a_file_is_skipped(self) -> None:
+        from jzr_tools.core import ffmpeg_install
+
+        # A folder where the program should be, so it is not a usable copy.
+        ffmpeg_install.tool_path("ffmpeg", self.base).mkdir(parents=True)
+        with mock.patch(WHICH, side_effect=fake_which({"ffmpeg": "P/ffmpeg", "ffprobe": "P/ffprobe"})):
+            tools = ffmpeg.locate(self.base)
+        self.assertEqual(tools.ffmpeg, Tool("P/ffmpeg", "PATH"))
+        self.assertEqual(tools.ffprobe, Tool("P/ffprobe", "PATH"))
 
 
 def completed(stdout: str, code: int = 0) -> subprocess.CompletedProcess:

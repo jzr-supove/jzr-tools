@@ -11,11 +11,15 @@ from collections import Counter
 from pathlib import Path
 import re
 import shlex
-from typing import Callable, Sequence
+import sys
+from typing import TYPE_CHECKING, Callable, Sequence
 
 import click
 
 from jzr_tools.core.batch import ConversionResult
+
+if TYPE_CHECKING:
+    from jzr_tools.core.ffmpeg import Tool
 
 Decorator = Callable[[Callable[..., None]], Callable[..., None]]
 
@@ -129,3 +133,46 @@ def summarize(label: str, counts: Counter[str]) -> None:
     click.echo(f"{label}: {summary}")
     if counts["failed"]:
         raise click.exceptions.Exit(1)
+
+
+def _interactive() -> bool:
+    """Whether someone is there to answer a question: stdin and stderr are terminals."""
+    try:
+        return sys.stdin.isatty() and sys.stderr.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def require_tools(*names: str) -> tuple[Tool, ...]:
+    """Find ffmpeg tools for a command, offering to install them when missing.
+
+    The offer is made once per run and only when someone can answer it;
+    otherwise, or after a "no", the reason is printed and the command exits 1.
+    """
+    from jzr_tools.core import ffmpeg, media
+
+    found = []
+    for name in names:
+        try:
+            found.append(ffmpeg.locate_tool(name))
+            continue
+        except media.ToolNotFoundError as error:
+            missing = error
+        except media.MissingToolError as error:
+            click.echo(str(error), err=True)
+            raise click.exceptions.Exit(1) from error
+
+        meta = click.get_current_context().find_root().meta
+        if _interactive() and not meta.get("jzr.ffmpeg_offered"):
+            meta["jzr.ffmpeg_offered"] = True
+            from jzr_tools.commands.ffmpeg import install_ffmpeg
+
+            if install_ffmpeg(assume_yes=False, offer=True):
+                try:
+                    found.append(ffmpeg.locate_tool(name))
+                    continue
+                except media.MissingToolError as error:
+                    missing = error
+        click.echo(str(missing), err=True)
+        raise click.exceptions.Exit(1) from missing
+    return tuple(found)

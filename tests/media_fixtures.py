@@ -82,6 +82,17 @@ def make_fake_tool(folder: Path, name: str, **spec: object) -> str:
     return str(launcher)
 
 
+def tool_not_found_error() -> type[Exception]:
+    """The error class for "no ffmpeg anywhere", wherever the code defines it."""
+    from jzr_tools.core import ffmpeg, media
+
+    for module in (ffmpeg, media):
+        found = getattr(module, "ToolNotFoundError", None)
+        if found is not None:
+            return found
+    raise AssertionError("ToolNotFoundError is defined neither in core.ffmpeg nor in core.media")
+
+
 def recorded_calls(tool_path: str) -> list[list[str]]:
     """Return the argument lists a fake tool was started with, oldest first."""
     folder = Path(tool_path).parent

@@ -21,7 +21,12 @@ from media_fixtures import HAVE_FFMPEG, Clips, make_fake_tool, recorded_calls
 WHICH = "jzr_tools.core.ffmpeg.shutil.which"
 runner = CliRunner()
 
-ENV_WITHOUT_TOOLS = {"JZR_FFMPEG": "", "JZR_FFPROBE": ""}
+ENV_WITHOUT_TOOLS = {"JZR_FFMPEG", "JZR_FFPROBE", "JZR_DATA_DIR"}
+NOT_FOUND = "{} was not found. Run: jzr ffmpeg install"
+
+# An empty folder standing in for jzr's own data folder, so a copy installed on
+# the machine running the tests is never found.
+_EMPTY_DATA = tempfile.TemporaryDirectory(prefix="jzr-empty-data-")
 
 
 def err(result: object) -> str:
@@ -35,10 +40,15 @@ def describe(result: object) -> str:
     return f"exit={result.exit_code}\nstdout={result.stdout!r}\nstderr={err(result)!r}"
 
 
-def without_tools():  # noqa: ANN201
-    """Environment where neither ffmpeg nor ffprobe can be found."""
+def without_tools(on_path: tuple[str, ...] = ()):  # noqa: ANN201
+    """Environment where the named tools (none by default) are only on PATH."""
     environ = {k: v for k, v in os.environ.items() if k not in ENV_WITHOUT_TOOLS}
-    return mock.patch.dict(os.environ, environ, clear=True), mock.patch(WHICH, return_value=None)
+    environ["JZR_DATA_DIR"] = _EMPTY_DATA.name
+    found = {name: f"C:/bin/{name}" for name in on_path}
+    return (
+        mock.patch.dict(os.environ, environ, clear=True),
+        mock.patch(WHICH, side_effect=lambda name, *a, **k: found.get(Path(name).stem)),
+    )
 
 
 def run_without_tools(args: list[str]):  # noqa: ANN201
@@ -57,20 +67,18 @@ class MissingToolsTests(unittest.TestCase):
     def test_info_without_ffprobe_says_so_once_and_exits_1(self) -> None:
         for group in ("video", "audio"):
             with self.subTest(group=group):
-                environ = {k: v for k, v in os.environ.items() if k not in ENV_WITHOUT_TOOLS}
-                with mock.patch.dict(os.environ, environ, clear=True), mock.patch(
-                    WHICH, side_effect=lambda name, *a, **k: "C:/bin/ffmpeg" if Path(name).stem == "ffmpeg" else None
-                ):
+                env, which = without_tools(on_path=("ffmpeg",))
+                with env, which:
                     result = runner.invoke(app, [group, "info", str(self.file)])
                 self.assertEqual(result.exit_code, 1, describe(result))
-                self.assertEqual(err(result).count("ffprobe was not found"), 1, describe(result))
+                self.assertEqual(err(result).strip(), NOT_FOUND.format("ffprobe"), describe(result))
                 self.assertNotIn("Traceback", describe(result))
                 self.assertEqual(result.stdout.strip(), "")
 
     def test_info_without_any_ffmpeg_says_so_once(self) -> None:
         result = run_without_tools(["video", "info", str(self.file)])
         self.assertEqual(result.exit_code, 1, describe(result))
-        self.assertEqual(err(result).count("was not found"), 1, describe(result))
+        self.assertEqual(err(result).strip(), NOT_FOUND.format("ffprobe"), describe(result))
         self.assertNotIn("Traceback", describe(result))
 
     def test_formats_without_ffmpeg_still_succeeds(self) -> None:
@@ -81,7 +89,7 @@ class MissingToolsTests(unittest.TestCase):
                 self.assertIn("targets:", result.stdout)
                 self.assertIn(targets, result.stdout)
                 self.assertIn("ffmpeg: not found", result.stdout)
-                self.assertTrue(err(result).startswith("ffmpeg was not found"), describe(result))
+                self.assertEqual(err(result).splitlines()[0], NOT_FOUND.format("ffmpeg"), describe(result))
                 self.assertNotIn("libmp3lame", result.stdout)
                 self.assertNotIn("libx264", result.stdout)
                 self.assertNotIn("Traceback", describe(result))

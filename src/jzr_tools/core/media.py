@@ -48,6 +48,10 @@ class MissingToolError(MediaError):
     """ffmpeg or ffprobe could not be found."""
 
 
+class ToolNotFoundError(MissingToolError):
+    """Neither the environment, jzr's own copy nor PATH has the tool."""
+
+
 # --- times -----------------------------------------------------------------
 
 _TIME_FORMS = "use seconds (90, 7.5) or [H:]MM:SS[.mmm] (1:30, 0:01:30.250)"
