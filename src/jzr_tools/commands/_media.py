@@ -8,8 +8,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
+from typing import TYPE_CHECKING
 
 import click
+
+if TYPE_CHECKING:
+    from jzr_tools.core.ffmpeg import Progress
 
 
 def info_command(*, tags: bool, help_text: str) -> click.Command:
@@ -97,3 +102,65 @@ def formats_command(*, targets: tuple[str, ...], video: bool, help_text: str) ->
             click.echo(f"  {codec.ljust(codec_width)}  {encoder.ljust(encoder_width)}  {state}")
 
     return command
+
+
+def resolve_source(path: Path, source_extension: str | None) -> Path:
+    """Return the file a listed source refers to.
+
+    With a known source format the extension may be left off (``song`` for
+    ``song.wav``), and a file with another extension is a usage error.
+    """
+    if source_extension is None:
+        if path.is_file():
+            return path
+        raise click.UsageError(f"File not found: {path}")
+
+    if path.is_file() and path.suffix.lstrip(".").lower() == source_extension:
+        return path
+    # Append rather than replace the suffix, so dotted names stay intact.
+    candidate = path.with_name(f"{path.name}.{source_extension}")
+    if candidate.is_file():
+        return candidate
+    if path.is_file():
+        raise click.UsageError(f"{path} is not a .{source_extension} file.")
+    raise click.UsageError(f"File not found: {path} (also tried {candidate})")
+
+
+class ProgressLine:
+    """One updating line on stderr while ffmpeg works, on a terminal only."""
+
+    def __init__(self, label: str) -> None:
+        self.label = label
+        self.enabled = click.get_text_stream("stderr").isatty()
+        self._width = 0
+
+    def __call__(self, progress: "Progress") -> None:
+        from jzr_tools.core.media import format_time
+
+        parts: list[str] = []
+        if progress.fraction is not None:
+            parts.append(f"{progress.fraction:4.0%}")
+        if progress.speed:
+            parts.append(f"{progress.speed:.1f}x")
+            if progress.fraction:
+                remaining = progress.seconds * (1 / progress.fraction - 1) / progress.speed
+                parts.append(f"{format_time(remaining)} left")
+        else:
+            parts.append(format_time(progress.seconds))
+        status = "  ".join(parts)
+
+        # A line wider than the terminal wraps, and `\r` then rewrites only
+        # its last row; shorten the name from the left instead.
+        room = shutil.get_terminal_size().columns - 1 - len(status) - 2
+        label = self.label
+        if len(label) > room:
+            label = "..." + label[-(room - 3):] if room > 6 else ""
+        text = f"{label}  {status}" if label else status
+        self._width = max(self._width, len(text))
+        click.echo("\r" + text.ljust(self._width), err=True, nl=False)
+
+    def clear(self) -> None:
+        """Remove the line so the result line starts on a clean row."""
+        if self._width:
+            click.echo("\r" + " " * self._width + "\r", err=True, nl=False)
+            self._width = 0

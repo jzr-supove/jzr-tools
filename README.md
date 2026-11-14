@@ -47,6 +47,8 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr image formats` | List supported extensions and the conversion engines available |
 | `jzr video info` | Show the container, duration, size and streams of video files |
 | `jzr video formats` | List video targets, the ffmpeg in use and which encoders it has |
+| `jzr audio convert` | Convert audio files to mp3, m4a, opus, ogg, flac or wav |
+| `jzr audio <from>2<to>` | Shorthand for a format pair, e.g. `jzr audio wav2mp3` |
 | `jzr audio info` | Show the format, streams and tags of audio files |
 | `jzr audio formats` | List audio targets, the ffmpeg in use and which encoders it has |
 | `jzr text slug` | Turn text into a URL-safe slug |
@@ -72,6 +74,7 @@ Name the files, or leave them out to convert a directory:
 
 ```bash
 jzr image convert photo.png --to jpg -q 90          # one file
+jzr image convert photo.png -o small/photo.webp     # one file, named output
 jzr image convert a.png b.webp --to avif            # several files
 jzr image convert --to jpg                          # every image in this directory
 jzr image convert --from heic --to jpg -d ~/Photos -r
@@ -88,7 +91,7 @@ jzr image heic2jpg -d ~/Photos -r      # every .heic under a directory
 ```
 
 Options: `-t/--to`, `-f/--from`, `-q/--quality` (1-100), `-d/--dir`,
-`-p/--pattern`, `-r/--recursive`, `-o/--outdir`, `-b/--backend` (`auto`,
+`-p/--pattern`, `-r/--recursive`, `-o/--output`, `--outdir`, `-b/--backend` (`auto`,
 `pillow`, `magick`), `--overwrite`, `--dry-run`.
 
 Behavior worth knowing:
@@ -102,6 +105,9 @@ Behavior worth knowing:
 - `--pattern` is a regular expression matched against each candidate's path
   relative to the search directory (just the file name unless `--recursive`
   is used), or against the file name of each listed file.
+- `-o/--output FILE` names the output of a single listed file; its extension
+  sets the target format, so `--to` can be left out. For several files use
+  `--outdir`.
 - Outputs land beside their source unless `--outdir` is given. When a
   directory is scanned with `--recursive`, its subdirectories are recreated
   under `--outdir`; explicitly listed sources are written flat.
@@ -172,6 +178,46 @@ jzr audio info song.mp3
 ffmpeg and ffprobe are used, their versions and where they were found, and
 which of the encoders jzr uses this ffmpeg build has. Include their output
 when reporting a problem.
+
+### Audio conversion
+
+`jzr audio convert` turns audio files into `mp3`, `m4a`, `opus`, `ogg`,
+`flac` or `wav`. It picks its sources and outputs the way `jzr image convert`
+does:
+
+```bash
+jzr audio convert song.wav --to mp3               # one file
+jzr audio convert song.wav -o out/song.mp3        # named output; --to not needed
+jzr audio convert *.flac --to m4a --outdir m4a
+jzr audio convert --to mp3 -d ~/Music -r          # every audio file under a directory
+jzr audio wav2mp3 song                            # pair shorthand; extension optional
+```
+
+Options: `-t/--to`, `-f/--from`, `-b/--bitrate` (kb/s, e.g. `128k`),
+`-d/--dir`, `-p/--pattern`, `-r/--recursive`, `-o/--output`, `--outdir`,
+`--overwrite`, `--dry-run`.
+
+- When the target can hold the source's codec, the audio is copied, with no
+  quality loss and almost instantly (AAC from an `.mp4` or `.m4a` into
+  `.m4a`, MP3 into `.mp3` under `--outdir`). Otherwise it is encoded. The
+  result line says which: `song.wav -> song.mp3 (audio encoded to mp3)`.
+- Encoding defaults: MP3 VBR about 190 kb/s, AAC 192 kb/s, Opus 128 kb/s,
+  Vorbis quality 5, FLAC level 5, WAV PCM. FLAC and WAV keep 24-bit sources
+  at 24 bits and write 16 bits otherwise. `--bitrate` sets the rate of the
+  lossy targets and forces an encode; for `flac` and `wav` it prints a note
+  and is ignored.
+- Tags are carried over. Cover art is carried into `mp3`, `m4a` and `flac`;
+  the other formats get none, and the result line says it was dropped.
+- Scanning a directory picks audio files only (`mp3 m4a aac opus ogg oga
+  flac wav aif aiff wma mka`) that are not already in the target format.
+  A listed video file is accepted too, and its first audio track is
+  converted; `jzr video` is the place for video work.
+- A file with no audio track, or one ffmpeg cannot read, fails on its own;
+  the rest still convert and the exit code is 1.
+- `--dry-run` prints the ffmpeg command for each file and writes nothing.
+- Output is written under a temporary `jzr-tmp-...` name and renamed when
+  ffmpeg succeeds, so a failure or Ctrl+C leaves no partial file and never
+  damages an existing one. On a terminal a progress line is shown on stderr.
 
 ## Ports
 

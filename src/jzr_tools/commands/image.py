@@ -16,7 +16,13 @@ from typing import Sequence
 
 import click
 
-from jzr_tools.commands._batch import batch_options, compile_pattern, report, summarize
+from jzr_tools.commands._batch import (
+    batch_options,
+    check_output,
+    compile_pattern,
+    report,
+    summarize,
+)
 from jzr_tools.core.images import (
     BACKENDS,
     SUPPORTED_EXTENSIONS,
@@ -127,6 +133,7 @@ def _run(
     *,
     quality: int | None,
     backend: str,
+    output: Path | None,
     outdir: Path | None,
     root: Path | None,
     overwrite: bool,
@@ -135,7 +142,8 @@ def _run(
     """Convert every source, reporting per file and summarizing at the end.
 
     ``root`` is the scanned directory when sources were discovered rather than
-    listed, so ``--outdir`` can mirror its subdirectories.
+    listed, so ``--outdir`` can mirror its subdirectories. ``output`` is the
+    exact file for a single source.
     """
     if not sources:
         click.echo("No matching files.", err=True)
@@ -152,7 +160,10 @@ def _run(
         if caveat is not None:
             click.echo(f"note: {caveat}", err=True)
 
-    targets = plan_targets(sources, target_extension, outdir=outdir, root=root)
+    if output is not None:
+        targets = [output]
+    else:
+        targets = plan_targets(sources, target_extension, outdir=outdir, root=root)
 
     counts: Counter[str] = Counter()
     for source, target in zip(sources, targets):
@@ -179,6 +190,7 @@ def _convert(
     directory: Path | None,
     pattern: str | None,
     recursive: bool,
+    output: Path | None,
     outdir: Path | None,
     quality: int | None,
     backend: str,
@@ -187,6 +199,11 @@ def _convert(
 ) -> None:
     """Select the sources for ``convert`` or a pair command, then convert them."""
     regex = compile_pattern(pattern)
+    check_output(output, sources=sources, outdir=outdir)
+    if output is not None and (
+        normalize_extension(output.suffix) not in equivalent_extensions(target_extension)
+    ):
+        raise click.UsageError(f"--output {output} does not end in .{target_extension}.")
 
     if sources:
         if directory is not None or recursive:
@@ -213,6 +230,7 @@ def _convert(
         target_extension,
         quality=quality,
         backend=backend,
+        output=output,
         outdir=outdir,
         root=root,
         overwrite=overwrite,
@@ -221,7 +239,13 @@ def _convert(
 
 
 @app.command()
-@click.option("-t", "--to", "target", required=True, help="Target format, e.g. jpg.")
+@click.option(
+    "-t",
+    "--to",
+    "target",
+    default=None,
+    help="Target format, e.g. jpg. Taken from --output when left out.",
+)
 @click.option(
     "-f",
     "--from",
@@ -231,16 +255,25 @@ def _convert(
 )
 @_conversion_options
 def convert(
-    sources: tuple[Path, ...], target: str, source: str | None, **options: object
+    sources: tuple[Path, ...],
+    target: str | None,
+    source: str | None,
+    output: Path | None,
+    **options: object,
 ) -> None:
     """Convert images to another format.
 
     List SOURCES to convert those files, or leave them out to convert every
     image in --dir that is not already in the target format.
     """
-    target_extension = _supported_extension(target)
+    if target is not None:
+        target_extension = _supported_extension(target)
+    elif output is not None and output.suffix:
+        target_extension = _supported_extension(output.suffix)
+    else:
+        raise click.UsageError("Missing option '-t' / '--to' (or name the file with -o).")
     source_extension = _supported_extension(source) if source is not None else None
-    _convert(sources, source_extension, target_extension, **options)
+    _convert(sources, source_extension, target_extension, output=output, **options)
 
 
 def _build_pair_command(name: str, source_extension: str, target_extension: str) -> click.Command:

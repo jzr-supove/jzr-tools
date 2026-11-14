@@ -367,7 +367,7 @@ class OutputFormatTests(TempDirTestCase):
         for extension in ALL_EXTENSIONS:
             with self.subTest(target=extension):
                 result = image_cli(
-                    "convert", "--to", extension, str(source), "-o", str(self.out)
+                    "convert", "--to", extension, str(source), "--outdir", str(self.out)
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 target = self.out / f"src.{extension}"
@@ -382,8 +382,8 @@ class OutputFormatTests(TempDirTestCase):
     def test_heic_and_avif_have_the_right_ftyp_brand(self) -> None:
         source = self.root / "src.png"
         gradient().save(source)
-        image_cli("convert", "--to", "heic", str(source), "-o", str(self.out))
-        image_cli("convert", "--to", "avif", str(source), "-o", str(self.out))
+        image_cli("convert", "--to", "heic", str(source), "--outdir", str(self.out))
+        image_cli("convert", "--to", "avif", str(source), "--outdir", str(self.out))
         heic = (self.out / "src.heic").read_bytes()
         avif = (self.out / "src.avif").read_bytes()
         self.assertEqual(heic[4:8], b"ftyp")
@@ -399,7 +399,7 @@ class OutputFormatTests(TempDirTestCase):
                 save_any(picture, source)
 
                 result = image_cli(
-                    "convert", "--to", "png", str(source), "-o", str(self.out)
+                    "convert", "--to", "png", str(source), "--outdir", str(self.out)
                 )
 
                 self.assertEqual(result.exit_code, 0, combined(result))
@@ -434,7 +434,7 @@ class TransparencyTests(TempDirTestCase):
         image, expected = transparency_fixture(kind)
         source = self.root / f"{kind}.png"
         image.save(source)
-        result = image_cli("convert", "--to", target, str(source), "-o", str(self.out))
+        result = image_cli("convert", "--to", target, str(source), "--outdir", str(self.out))
         self.assertEqual(result.exit_code, 0, combined(result))
         return reopen(self.out / f"{kind}.{target}"), expected
 
@@ -504,7 +504,7 @@ class OrientationTests(TempDirTestCase):
                 with self.subTest(orientation=orientation, target=target):
                     source = self._source(orientation, f"o{orientation}.jpg")
                     result = image_cli(
-                        "convert", "--to", target, str(source), "-o", str(self.out)
+                        "convert", "--to", target, str(source), "--outdir", str(self.out)
                     )
                     self.assertEqual(result.exit_code, 0, combined(result))
                     output = reopen(self.out / f"o{orientation}.{target}").convert("RGB")
@@ -534,7 +534,7 @@ class OrientationTests(TempDirTestCase):
             with self.subTest(target=target):
                 source = self._source(6, f"t_{target}.jpg")
                 result = image_cli(
-                    "convert", "--to", target, str(source), "-o", str(self.out)
+                    "convert", "--to", target, str(source), "--outdir", str(self.out)
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 output = reopen(self.out / f"t_{target}.{target}")
@@ -542,7 +542,7 @@ class OrientationTests(TempDirTestCase):
 
     def test_upright_source_is_left_alone(self) -> None:
         source = self._source(1)
-        result = image_cli("convert", "--to", "png", str(source), "-o", str(self.out))
+        result = image_cli("convert", "--to", "png", str(source), "--outdir", str(self.out))
         self.assertEqual(result.exit_code, 0, combined(result))
         output = reopen(self.out / "photo.png")
         self.assertEqual(output.size, (32, 16))
@@ -578,7 +578,7 @@ class MetadataTests(TempDirTestCase):
                 with self.subTest(source=source_extension, target=target):
                     destination = self.out / f"{source_extension}_{target}"
                     result = image_cli(
-                        "convert", "--to", target, str(source), "-o", str(destination)
+                        "convert", "--to", target, str(source), "--outdir", str(destination)
                     )
                     self.assertEqual(result.exit_code, 0, combined(result))
                     output = reopen(destination / f"meta.{target}")
@@ -593,7 +593,7 @@ class MetadataTests(TempDirTestCase):
         for target in ("png", "webp"):
             with self.subTest(target=target):
                 result = image_cli(
-                    "convert", "--to", target, str(source), "-o", str(self.out)
+                    "convert", "--to", target, str(source), "--outdir", str(self.out)
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 output = reopen(self.out / f"cmyk.{target}")
@@ -608,7 +608,7 @@ class MetadataTests(TempDirTestCase):
         for target in ("jpg", "tiff"):
             with self.subTest(target=target):
                 result = image_cli(
-                    "convert", "--to", target, str(source), "-o", str(self.out)
+                    "convert", "--to", target, str(source), "--outdir", str(self.out)
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 output = reopen(self.out / f"cmyk.{target}")
@@ -632,7 +632,7 @@ class QualityTests(TempDirTestCase):
     def _size(self, target: str, *quality: str) -> int:
         destination = self.out / f"{target}_{'_'.join(quality) or 'default'}"
         result = image_cli(
-            "convert", "--to", target, str(self.source), "-o", str(destination), *quality
+            "convert", "--to", target, str(self.source), "--outdir", str(destination), *quality
         )
         self.assertEqual(result.exit_code, 0, combined(result))
         return (destination / f"noise.{target}").stat().st_size
@@ -655,7 +655,7 @@ class QualityTests(TempDirTestCase):
             with self.subTest(target=target):
                 result = image_cli(
                     "convert", "--to", target, str(self.source),
-                    "-o", str(self.out / target), "-q", "80",
+                    "--outdir", str(self.out / target), "-q", "80",
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 self.assertNotIn("note:", result.stderr)
@@ -665,7 +665,7 @@ class QualityTests(TempDirTestCase):
             with self.subTest(target=target):
                 result = image_cli(
                     "convert", "--to", target, str(self.source),
-                    "-o", str(self.out / target), "-q", "80",
+                    "--outdir", str(self.out / target), "-q", "80",
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 self.assertIn(
@@ -716,7 +716,7 @@ class ColourModeTests(TempDirTestCase):
             with self.subTest(target=extension):
                 destination = self.out / extension
                 result = image_cli(
-                    "convert", "--to", extension, *map(str, sources), "-o", str(destination)
+                    "convert", "--to", extension, *map(str, sources), "--outdir", str(destination)
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 self.assertIn(f"pillow: {len(sources)} converted", result.stdout)
@@ -735,7 +735,7 @@ class ColourModeTests(TempDirTestCase):
         for extension in ("jpg", "bmp", "ppm", "webp", "gif", "tga", "png", "tif", "avif"):
             with self.subTest(target=extension):
                 result = image_cli(
-                    "convert", "--to", extension, str(source), "-o", str(self.out)
+                    "convert", "--to", extension, str(source), "--outdir", str(self.out)
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 output = reopen(self.out / f"grey16.{extension}")
@@ -775,7 +775,7 @@ class AnimationTests(TempDirTestCase):
             with self.subTest(target=target):
                 destination = self.out / target
                 result = image_cli(
-                    "convert", "--to", target, str(source), "-o", str(destination)
+                    "convert", "--to", target, str(source), "--outdir", str(destination)
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 output = opened(destination / f"anim.{target}")
@@ -802,7 +802,7 @@ class AnimationTests(TempDirTestCase):
     def test_animated_webp_source_keeps_frames_when_written_as_gif(self) -> None:
         source = self.root / "anim.webp"
         animated_frames(source, self.DURATIONS)
-        result = image_cli("convert", "--to", "gif", str(source), "-o", str(self.out))
+        result = image_cli("convert", "--to", "gif", str(source), "--outdir", str(self.out))
         self.assertEqual(result.exit_code, 0, combined(result))
         self.assertEqual(opened(self.out / "anim.gif").n_frames, 3)
 
@@ -813,7 +813,7 @@ class AnimationTests(TempDirTestCase):
             with self.subTest(target=target):
                 destination = self.out / target
                 result = image_cli(
-                    "convert", "--to", target, str(source), "-o", str(destination)
+                    "convert", "--to", target, str(source), "--outdir", str(destination)
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 self.assertEqual(
@@ -829,7 +829,7 @@ class AnimationTests(TempDirTestCase):
         for target in ("gif", "webp", "avif"):
             with self.subTest(target=target):
                 result = image_cli(
-                    "convert", "--to", target, str(source), "-o", str(self.out)
+                    "convert", "--to", target, str(source), "--outdir", str(self.out)
                 )
                 self.assertEqual(result.exit_code, 0, combined(result))
                 output = opened(self.out / f"still.{target}")
@@ -983,7 +983,7 @@ class ContentOverExtensionTests(TempDirTestCase):
                 self.assertEqual(opened(source).size, (32, 32), "fixture check")
 
                 result = image_cli(
-                    "convert", "--to", target, str(source), "-o", str(self.out)
+                    "convert", "--to", target, str(source), "--outdir", str(self.out)
                 )
 
                 self.assertEqual(result.exit_code, 0, combined(result))
@@ -1018,7 +1018,7 @@ class LiteralNameTests(TempDirTestCase):
         source_dir.mkdir()
         gradient().save(source_dir / "50%.png")
         result = image_cli(
-            "png2jpg", str(source_dir / "50%.png"), "-o", str(self.root / "o%d" / "sub%03d")
+            "png2jpg", str(source_dir / "50%.png"), "--outdir", str(self.root / "o%d" / "sub%03d")
         )
         self.assertEqual(result.exit_code, 0, combined(result))
         self.assertEqual(
@@ -1034,7 +1034,7 @@ class LiteralNameTests(TempDirTestCase):
         gradient().save(root / "sub%d" / "50%.png")
         out = self.root / "out%d"
 
-        result = image_cli("png2jpg", "-d", str(root), "-r", "-o", str(out))
+        result = image_cli("png2jpg", "-d", str(root), "-r", "--outdir", str(out))
 
         self.assertEqual(result.exit_code, 0, combined(result))
         self.assertEqual(
@@ -1054,7 +1054,7 @@ class LiteralNameTests(TempDirTestCase):
 
     def test_no_staging_note_is_printed(self) -> None:
         gradient().save(self.root / "100%d.png")
-        dry = image_cli("png2jpg", str(self.root / "100%d.png"), "-o", str(self.root / "o%d"), "--dry-run")
+        dry = image_cli("png2jpg", str(self.root / "100%d.png"), "--outdir", str(self.root / "o%d"), "--dry-run")
         self.assertEqual(dry.exit_code, 0, combined(dry))
         self.assertEqual(dry.stderr, "")
         self.assertNotIn("renamed", combined(dry))
@@ -1077,7 +1077,7 @@ class LargeImageTests(TempDirTestCase):
         proc = subprocess.run(
             [
                 sys.executable, "-W", "always", "-m", "jzr_tools",
-                "image", "convert", "--to", "png", str(source), "-o", str(self.out),
+                "image", "convert", "--to", "png", str(source), "--outdir", str(self.out),
             ],
             capture_output=True,
             text=True,

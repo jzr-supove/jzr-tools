@@ -169,6 +169,8 @@ class AudioStream:
     sample_rate: int | None
     bitrate: int | None
     language: str | None
+    # Bits per sample of the source (16, 24), when ffprobe knows it.
+    bits: int | None = None
 
 
 @dataclass(frozen=True)
@@ -278,6 +280,9 @@ def parse_probe(data: dict[str, Any], path: Path) -> MediaInfo:
                     sample_rate=_int(stream.get("sample_rate")),
                     bitrate=_int(stream.get("bit_rate")),
                     language=language if language and language != "und" else None,
+                    bits=_int(stream.get("bits_per_raw_sample"))
+                    or _int(stream.get("bits_per_sample"))
+                    or None,
                 )
             )
         else:
@@ -434,3 +439,131 @@ def info_rows(info: MediaInfo, *, tags: bool) -> list[tuple[str, str]]:
         rows.append(("cover art", "yes" if info.cover_art else "no"))
 
     return rows
+
+
+# --- audio conversion ----------------------------------------------------------
+
+# Extensions read as audio when scanning a directory or naming a pair command.
+AUDIO_EXTENSIONS = frozenset(
+    {"mp3", "m4a", "aac", "opus", "ogg", "oga", "flac", "wav", "aif", "aiff", "wma", "mka"}
+)
+
+_LOSSLESS_TARGETS = frozenset({"flac", "wav"})
+# Codecs each target holds as they are, so they are copied rather than encoded.
+_COPYABLE = {
+    "mp3": frozenset({"mp3"}),
+    "m4a": frozenset({"aac", "alac"}),
+    "opus": frozenset({"opus"}),
+    "ogg": frozenset({"vorbis"}),
+    "flac": frozenset({"flac"}),
+    "wav": frozenset(
+        {"pcm_u8", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le"}
+    ),
+}
+_COVER_TARGETS = frozenset({"mp3", "m4a", "flac"})
+# Container tags MP4 sources carry that mean nothing in another file.
+_MP4_BRAND_TAGS = ("major_brand", "minor_version", "compatible_brands")
+
+_BITRATE = re.compile(r"(\d+)\s*(?:k|kbps|kb/s)?")
+
+
+def parse_bitrate(text: str) -> str:
+    """Read an audio bitrate in kb/s (``128k``, ``128``) as ffmpeg's ``128k``."""
+    match = _BITRATE.fullmatch(text.strip().lower())
+    rate = int(match.group(1)) if match else 0
+    if not 8 <= rate <= 512:
+        raise ValueError(f"{text!r} is not a bitrate; use kb/s from 8k to 512k, such as 128k")
+    return f"{rate}k"
+
+
+@dataclass(frozen=True)
+class AudioOptions:
+    # Normalised by ``parse_bitrate``; ``None`` keeps the target's default.
+    bitrate: str | None = None
+
+
+@dataclass(frozen=True)
+class AudioPlan:
+    # ffmpeg arguments between ``-i <source>`` and the output path.
+    args: tuple[str, ...]
+    # What happened, for the result line: ``audio copied``.
+    note: str
+
+
+def bitrate_caveat(target_ext: str) -> str | None:
+    """Explain that ``--bitrate`` does nothing for a lossless target."""
+    extension = target_ext.strip().lstrip(".").lower()
+    if extension in _LOSSLESS_TARGETS:
+        return f".{extension} is lossless; --bitrate is ignored"
+    return None
+
+
+def _container_names(info: MediaInfo) -> set[str]:
+    return set((info.container or "").split(","))
+
+
+def _encoder_args(target: str, stream: AudioStream, bitrate: str | None) -> tuple[str, ...]:
+    deep = (stream.bits or 0) > 16
+    if target == "mp3":
+        quality = ("-b:a", bitrate) if bitrate else ("-q:a", "2")
+        return ("-c:a", "libmp3lame", *quality)
+    if target == "m4a":
+        return ("-c:a", "aac", "-b:a", bitrate or "192k")
+    if target == "opus":
+        return ("-c:a", "libopus", "-b:a", bitrate or "128k")
+    if target == "ogg":
+        quality = ("-b:a", bitrate) if bitrate else ("-q:a", "5")
+        return ("-c:a", "libvorbis", *quality)
+    if target == "flac":
+        return ("-c:a", "flac", "-sample_fmt", "s32" if deep else "s16", "-compression_level", "5")
+    if target == "wav":
+        return ("-c:a", "pcm_s24le" if deep else "pcm_s16le")
+    raise ValueError(f"not an audio target: {target}")
+
+
+def plan_audio_convert(info: MediaInfo, target_ext: str, options: AudioOptions) -> AudioPlan:
+    """Decide how to turn ``info``'s first audio stream into ``target_ext``.
+
+    The stream is copied when the target holds its codec and no bitrate was
+    asked for, otherwise encoded with the target's defaults. Tags go along;
+    cover art goes into the formats that can hold it.
+    """
+    target = target_ext.strip().lstrip(".").lower()
+    if target not in _COPYABLE:
+        raise ValueError(f"not an audio target: {target_ext}")
+    if not info.audio:
+        raise MediaError("no audio track")
+    stream = info.audio[0]
+    containers = _container_names(info)
+
+    args: list[str] = ["-map", "0:a:0"]
+    # In an audio file a video stream is its cover; in a video it is the film.
+    has_cover = info.cover_art and info.video is None
+    if has_cover and target in _COVER_TARGETS:
+        args += ["-map", "0:v", "-c:v", "copy", "-disposition:v", "attached_pic"]
+
+    # Ogg keeps its tags on the audio stream; elsewhere they are the file's.
+    args += ["-map_metadata", "0:s:a:0" if "ogg" in containers else "0"]
+    if containers & {"mp4", "mov"}:
+        for key in _MP4_BRAND_TAGS:
+            args += ["-metadata", f"{key}="]
+
+    lossless = target in _LOSSLESS_TARGETS
+    if stream.codec in _COPYABLE[target] and (lossless or not options.bitrate):
+        args += ["-c:a", "copy"]
+        note = "audio copied"
+    else:
+        encoder = _encoder_args(target, stream, None if lossless else options.bitrate)
+        args += encoder
+        codec = {"libmp3lame": "mp3", "libopus": "opus", "libvorbis": "vorbis"}.get(
+            encoder[1], encoder[1]
+        )
+        note = f"audio encoded to {codec}"
+
+    if target == "mp3":
+        # ID3v2.3 is the version every player and Windows Explorer read.
+        args += ["-id3v2_version", "3"]
+
+    if has_cover and target not in _COVER_TARGETS:
+        note += f"; cover art dropped: .{target} cannot hold it"
+    return AudioPlan(tuple(args), note)

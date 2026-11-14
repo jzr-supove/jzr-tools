@@ -11,7 +11,7 @@ from collections import Counter
 from pathlib import Path
 import re
 import shlex
-from typing import Callable
+from typing import Callable, Sequence
 
 import click
 
@@ -47,6 +47,13 @@ def batch_options(*extra: Decorator) -> Decorator:
         ),
         click.option(
             "-o",
+            "--output",
+            type=click.Path(path_type=Path),
+            metavar="FILE",
+            default=None,
+            help="Write the one listed SOURCE to this file.",
+        ),
+        click.option(
             "--outdir",
             type=click.Path(file_okay=False, path_type=Path),
             default=None,
@@ -81,6 +88,23 @@ def compile_pattern(pattern: str | None) -> re.Pattern[str] | None:
         ) from error
 
 
+def check_output(
+    output: Path | None, *, sources: Sequence[Path], outdir: Path | None
+) -> None:
+    """Reject ``--output`` unless it names one file for one listed source."""
+    if output is None:
+        return
+    if outdir is not None:
+        raise click.UsageError("--output and --outdir cannot be used together.")
+    if len(sources) != 1:
+        raise click.UsageError(
+            "--output names one file, so list exactly one SOURCE; "
+            "use --outdir for several."
+        )
+    if output.is_dir():
+        raise click.UsageError(f"--output {output} is a directory; use --outdir for that.")
+
+
 def report(result: ConversionResult) -> None:
     """Print the line for one file: stdout for work done, stderr otherwise."""
     if result.status == "planned":
@@ -91,7 +115,8 @@ def report(result: ConversionResult) -> None:
         if result.detail:
             click.echo(f"note: {result.detail}", err=True)
     elif result.status == "converted":
-        click.echo(f"{result.source} -> {result.target}")
+        note = f" ({result.detail})" if result.detail else ""
+        click.echo(f"{result.source} -> {result.target}{note}")
     elif result.status == "skipped":
         click.echo(f"skip {result.source}: {result.detail}", err=True)
     else:

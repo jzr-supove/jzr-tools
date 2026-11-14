@@ -354,7 +354,7 @@ class CollisionCliTests(unittest.TestCase):
             (root / "sub" / "x.png").write_bytes(ONE_PIXEL_PNG)
 
             result = self._invoke(
-                ["image", "convert", "--to", "jpg", "-d", str(root), "-r", "-o", str(out), "--dry-run"]
+                ["image", "convert", "--to", "jpg", "-d", str(root), "-r", "--outdir", str(out), "--dry-run"]
             )
 
             self.assertEqual(result.exit_code, 0, combined(result))
@@ -379,7 +379,7 @@ class CollisionCliTests(unittest.TestCase):
                     "png2jpg",
                     str(base / "a" / "x.png"),
                     str(base / "b" / "x.png"),
-                    "-o",
+                    "--outdir",
                     str(out),
                     "--dry-run",
                 ]

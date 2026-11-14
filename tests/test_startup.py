@@ -410,6 +410,21 @@ class MediaStartupTests(_ObservedTestCase):
                     self.assert_ok(obs)
                     self.assert_not_loaded(obs, HEAVY_MODULES)
 
+    def test_audio_convert_and_pair_help_load_no_image_or_prompt_code(self) -> None:
+        for args in (["audio", "convert", "-h"], ["audio", "wav2mp3", "-h"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
+                self.assert_not_loaded(obs, HEAVY_MODULES)
+
+    def test_audio_group_help_lists_convert(self) -> None:
+        obs = self.run_cli("audio", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("convert", listed)
+        self.assert_not_loaded(obs, HEAVY_MODULES)
+
     def test_group_help_lists_info_and_formats(self) -> None:
         for group in ("video", "audio"):
             with self.subTest(group=group):

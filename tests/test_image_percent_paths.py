@@ -81,7 +81,7 @@ class PercentFileNameTests(unittest.TestCase):
                 root.mkdir()
                 (root / f"{stem}.png").write_bytes(ONE_PIXEL_PNG)
 
-                result = convert(["png2jpg", str(root / f"{stem}.png"), "-o", str(out)])
+                result = convert(["png2jpg", str(root / f"{stem}.png"), "--outdir", str(out)])
 
                 self.assertEqual(result.exit_code, 0, combined(result))
                 self.assertEqual(listing(root), [f"{stem}.png"])
@@ -155,7 +155,7 @@ class PercentDirectoryTests(unittest.TestCase):
             (root / "plain.png").write_bytes(ONE_PIXEL_PNG)
             (root / "d%d").mkdir()
 
-            result = convert(["png2jpg", str(root / "plain.png"), "-o", str(root / "d%d")])
+            result = convert(["png2jpg", str(root / "plain.png"), "--outdir", str(root / "d%d")])
 
             self.assertEqual(result.exit_code, 0, combined(result))
             self.assertEqual(listing(root), ["d%d", "d%d/plain.jpg", "plain.png"])
@@ -166,7 +166,7 @@ class PercentDirectoryTests(unittest.TestCase):
             root = Path(tmp)
             (root / "plain.png").write_bytes(ONE_PIXEL_PNG)
 
-            result = convert(["png2jpg", str(root / "plain.png"), "-o", str(root / "d%d")])
+            result = convert(["png2jpg", str(root / "plain.png"), "--outdir", str(root / "d%d")])
 
             self.assertEqual(result.exit_code, 0, combined(result))
             self.assertEqual(listing(root), ["d%d", "d%d/plain.jpg", "plain.png"])
@@ -176,7 +176,7 @@ class PercentDirectoryTests(unittest.TestCase):
             root = Path(tmp)
             (root / "100%d.png").write_bytes(ONE_PIXEL_PNG)
 
-            result = convert(["png2jpg", str(root / "100%d.png"), "-o", str(root / "o%d")])
+            result = convert(["png2jpg", str(root / "100%d.png"), "--outdir", str(root / "o%d")])
 
             self.assertEqual(result.exit_code, 0, combined(result))
             self.assertEqual(listing(root), ["100%d.png", "o%d", "o%d/100%d.jpg"])
@@ -206,7 +206,7 @@ class PercentDirectoryTests(unittest.TestCase):
             original = os.getcwd()
             os.chdir(root)
             try:
-                result = convert(["png2jpg", "plain.png", "-o", "out"])
+                result = convert(["png2jpg", "plain.png", "--outdir", "out"])
                 files = listing(root)
             finally:
                 os.chdir(original)
@@ -259,7 +259,7 @@ class PercentDirectoryScanTests(unittest.TestCase):
             (root / "sub%d" / "50%.png").write_bytes(ONE_PIXEL_PNG)
             out = base / "out%d"
 
-            result = convert(["png2jpg", "-d", str(root), "-r", "-o", str(out)])
+            result = convert(["png2jpg", "-d", str(root), "-r", "--outdir", str(out)])
 
             self.assertEqual(result.exit_code, 0, combined(result))
             self.assertEqual(
@@ -312,7 +312,7 @@ class PercentMultiFrameTests(unittest.TestCase):
             (root / "d%d").mkdir()
             (root / "d%d" / "anim.gif").write_bytes(three_frame_gif())
 
-            result = convert(["gif2png", str(root / "d%d" / "anim.gif"), "-o", str(root / "o%d")])
+            result = convert(["gif2png", str(root / "d%d" / "anim.gif"), "--outdir", str(root / "o%d")])
 
             self.assertEqual(result.exit_code, 0, combined(result))
             self.assertEqual(
@@ -365,7 +365,7 @@ class PercentFailureAndExistingTargetTests(unittest.TestCase):
             (root / "100%d.png").write_bytes(b"this is not an image")
             (root / "o%d").mkdir()
 
-            result = convert(["png2jpg", str(root / "100%d.png"), "-o", str(root / "o%d")])
+            result = convert(["png2jpg", str(root / "100%d.png"), "--outdir", str(root / "o%d")])
 
             self.assertEqual(result.exit_code, 1, combined(result))
             self.assertIn("fail", combined(result))
@@ -429,7 +429,7 @@ class PercentFailureAndExistingTargetTests(unittest.TestCase):
 
             result = convert(
                 ["png2jpg", str(root / "100%d.png"), str(root / "50%.png"),
-                 "-o", str(root / "o%d"), "--dry-run"]
+                 "--outdir", str(root / "o%d"), "--dry-run"]
             )
 
             self.assertEqual(result.exit_code, 0, combined(result))

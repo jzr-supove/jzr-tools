@@ -260,7 +260,7 @@ class ExplicitSourceTests(unittest.TestCase):
             out = root / "OUT"
 
             result = plan(
-                ["image", "convert", "--from", "png", "--to", "jpg", str(root / "shot"), "-o", str(out)]
+                ["image", "convert", "--from", "png", "--to", "jpg", str(root / "shot"), "--outdir", str(out)]
             )
 
             self.assertEqual(result.exit_code, 0, combined(result))
@@ -400,7 +400,7 @@ class ConvertOptionTests(unittest.TestCase):
             out = Path(tmpdir) / "OUT"
             touch(root / "sub" / "x.png")
 
-            result = plan(["image", "png2jpg", "-d", str(root), "-r", "-o", str(out)])
+            result = plan(["image", "png2jpg", "-d", str(root), "-r", "--outdir", str(out)])
 
             self.assertEqual(planned_targets(result), [str(out / "sub" / "x.jpg")])
 
