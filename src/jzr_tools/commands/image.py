@@ -18,6 +18,7 @@ from typing import Callable, Sequence
 import click
 
 from jzr_tools.core.images import (
+    BACKENDS,
     SUPPORTED_EXTENSIONS,
     BackendUnavailableError,
     ConversionResult,
@@ -29,12 +30,11 @@ from jzr_tools.core.images import (
     plan_targets,
     quality_caveat,
     resolve_backend,
-    unsupported_target,
 )
 
 _PAIR_PATTERN = re.compile(r"^([a-z0-9]+)2([a-z0-9]+)$")
 
-_BACKEND_CHOICE = click.Choice(["auto", "magick", "ffmpeg"])
+_BACKEND_CHOICE = click.Choice(["auto", *BACKENDS])
 
 
 class ImageGroup(click.Group):
@@ -60,7 +60,7 @@ class ImageGroup(click.Group):
 
 @click.group(cls=ImageGroup)
 def app() -> None:
-    """Convert images using ImageMagick or ffmpeg.
+    """Convert images between formats.
 
     Besides the commands listed below, any format pair works as a command:
     'jzr image png2jpg shot.png' is short for
@@ -112,10 +112,12 @@ def _conversion_options(function: Callable[..., None]) -> Callable[..., None]:
             type=_BACKEND_CHOICE,
             default="auto",
             show_default=True,
-            help="Conversion backend to use.",
+            help="Conversion engine: built-in Pillow, or ImageMagick from PATH.",
         ),
         click.option("--overwrite", is_flag=True, help="Replace existing output files."),
-        click.option("--dry-run", is_flag=True, help="Print commands without running them."),
+        click.option(
+            "--dry-run", is_flag=True, help="Show what would be converted; write nothing."
+        ),
     ]
     # Decorators apply bottom-up, so reverse to keep this order in --help.
     for decorator in reversed(decorators):
@@ -125,7 +127,10 @@ def _conversion_options(function: Callable[..., None]) -> Callable[..., None]:
 
 def _report(result: ConversionResult) -> None:
     if result.status == "planned":
-        click.echo(shlex.join(result.command))
+        if result.command:
+            click.echo(shlex.join(result.command))
+        else:
+            click.echo(f"{result.source} -> {result.target}")
         if result.detail:
             click.echo(f"note: {result.detail}", err=True)
     elif result.status == "converted":
@@ -150,7 +155,7 @@ def _compile_pattern(pattern: str | None) -> re.Pattern[str] | None:
 
 
 def _supported_extension(value: str) -> str:
-    """Normalize a format option, rejecting formats no backend handles."""
+    """Normalize a format option, rejecting formats that are not supported."""
     extension = normalize_extension(value)
     if extension not in SUPPORTED_EXTENSIONS:
         raise click.UsageError(f"Unsupported extension: {value}. See 'jzr image formats'.")
@@ -209,11 +214,6 @@ def _run(
     except BackendUnavailableError as error:
         click.echo(str(error), err=True)
         raise click.exceptions.Exit(1) from error
-
-    unsupported = unsupported_target(backend_name, target_extension)
-    if unsupported is not None:
-        click.echo(unsupported, err=True)
-        raise click.exceptions.Exit(1)
 
     if quality is not None:
         caveat = quality_caveat(backend_name, target_extension)
@@ -337,18 +337,11 @@ def _build_pair_command(name: str, source_extension: str, target_extension: str)
 
 @app.command()
 def formats() -> None:
-    """Show supported extensions and detected backends."""
-    click.echo("extensions: " + " ".join(sorted(SUPPORTED_EXTENSIONS)))
+    """Show supported extensions and the conversion engines available."""
+    from importlib.metadata import version
 
-    available = detect_backends()
-    for name in ("magick", "ffmpeg"):
-        location = available.get(name)
-        line = f"{name}: {location[0] if location else 'not found'}"
-        unwritable = sorted(
-            extension
-            for extension in SUPPORTED_EXTENSIONS
-            if unsupported_target(name, extension) is not None
-        )
-        if unwritable:
-            line += f" (cannot write: {' '.join(unwritable)})"
-        click.echo(line)
+    click.echo("extensions: " + " ".join(sorted(SUPPORTED_EXTENSIONS)))
+    click.echo(f"pillow: {version('pillow')}, pillow-heif {version('pillow-heif')}")
+
+    magick = detect_backends().get("magick")
+    click.echo(f"magick: {magick[0] if magick else 'not found'}")

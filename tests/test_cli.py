@@ -18,7 +18,6 @@ from click.testing import CliRunner
 from jzr_tools.cli import app
 from jzr_tools.core.images import (
     build_command,
-    detect_backends,
     equivalent_extensions,
     find_sources,
     quality_caveat,
@@ -172,39 +171,8 @@ class ImageCoreTests(unittest.TestCase):
             ["/usr/bin/magick", "shot.png[0]", "-quality", "90", "shot.jpg"],
         )
 
-    def test_ffmpeg_command_maps_quality_onto_inverted_scale(self) -> None:
-        command = build_command(
-            "ffmpeg",
-            ["/usr/bin/ffmpeg"],
-            Path("shot.png"),
-            Path("shot.jpg"),
-            quality=100,
-            overwrite=True,
-        )
-
-        self.assertIn("-q:v", command)
-        self.assertEqual(command[command.index("-q:v") + 1], "2")
-        self.assertIn("-y", command)
-        self.assertEqual(command[-1], "shot.jpg")
-
-    def test_ffmpeg_command_refuses_to_clobber_without_overwrite(self) -> None:
-        command = build_command(
-            "ffmpeg",
-            ["/usr/bin/ffmpeg"],
-            Path("shot.png"),
-            Path("shot.webp"),
-            overwrite=False,
-        )
-
-        self.assertIn("-n", command)
-        self.assertNotIn("-y", command)
-        # webp can be animated, so the single-frame guard must stay off.
-        self.assertNotIn("-frames:v", command)
-
     def test_quality_caveat_is_silent_only_for_lossy_targets(self) -> None:
-        self.assertIsNone(quality_caveat("ffmpeg", "jpg"))
         self.assertIsNone(quality_caveat("magick", "webp"))
-        self.assertIn("ignores", quality_caveat("ffmpeg", "png"))
         self.assertIn("lossless", quality_caveat("magick", "png"))
         self.assertIn("ignores", quality_caveat("magick", "bmp"))
 
@@ -275,8 +243,7 @@ class ConvertCliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 2)
         self.assertIn("Unsupported extension", combined_output(result))
 
-    @unittest.skipUnless(detect_backends(), "needs ImageMagick or ffmpeg")
-    def test_dry_run_prints_backend_command_without_writing(self) -> None:
+    def test_dry_run_prints_the_planned_conversion_without_writing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "shot.png"
             source.write_bytes(ONE_PIXEL_PNG)
@@ -289,7 +256,6 @@ class ConvertCliTests(unittest.TestCase):
             self.assertIn("shot.jpg", result.stdout)
             self.assertFalse((Path(tmpdir) / "shot.jpg").exists())
 
-    @unittest.skipUnless(detect_backends(), "needs ImageMagick or ffmpeg")
     def test_batch_mode_converts_pattern_matches_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -305,7 +271,6 @@ class ConvertCliTests(unittest.TestCase):
             self.assertTrue((root / "IMG_one.jpg").exists())
             self.assertFalse((root / "skipme.jpg").exists())
 
-    @unittest.skipUnless(detect_backends(), "needs ImageMagick or ffmpeg")
     def test_existing_target_is_skipped_until_overwrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

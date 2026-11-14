@@ -44,7 +44,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 |---------|--------------|
 | `jzr image convert` | Convert images between formats, one file or a whole directory |
 | `jzr image <from>2<to>` | Shorthand for a format pair, e.g. `jzr image png2jpg` |
-| `jzr image formats` | List supported extensions and the backends found on `PATH` |
+| `jzr image formats` | List supported extensions and the conversion engines available |
 | `jzr text slug` | Turn text into a URL-safe slug |
 | `jzr text kebab` | Turn text into lowercase kebab-case, optionally dated and copied |
 | `jzr port show` | Show which processes are using a local port |
@@ -60,9 +60,9 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 
 ## Image Conversion
 
-`jzr image` shells out to ImageMagick (`magick`) or `ffmpeg`, whichever is
-installed. At least one of them is required; `magick` is preferred when both
-are present.
+`jzr image` converts with Pillow, which is installed with the toolkit, so it
+needs nothing else on your machine. HEIC and AVIF are included. Pass
+`--backend magick` to use ImageMagick from `PATH` instead.
 
 Name the files, or leave them out to convert a directory:
 
@@ -85,7 +85,7 @@ jzr image heic2jpg -d ~/Photos -r      # every .heic under a directory
 
 Options: `-t/--to`, `-f/--from`, `-q/--quality` (1-100), `-d/--dir`,
 `-p/--pattern`, `-r/--recursive`, `-o/--outdir`, `-b/--backend` (`auto`,
-`magick`, `ffmpeg`), `--overwrite`, `--dry-run`.
+`pillow`, `magick`), `--overwrite`, `--dry-run`.
 
 Behavior worth knowing:
 
@@ -105,27 +105,37 @@ Behavior worth knowing:
   (`logo.png` and `logo.webp` both becoming `logo.jpg`) get `-2`, `-3`, ...
   appended, in sorted source order.
 - Existing outputs are skipped unless `--overwrite` is passed.
-- Only the first frame of a multi-frame source (animated GIF, multi-size ICO)
-  is used unless the target is itself animated (`gif`, `webp`, `avif`).
-- ffmpeg cannot write `heic`/`heif`; those targets need ImageMagick.
+- An animated source (GIF, WebP) stays animated when the target is `gif`,
+  `webp` or `avif`, with its frame timings. Any other target gets the first
+  frame.
+- Transparent areas become white in formats that cannot hold transparency
+  (`jpg`, `bmp`, `ppm`).
+- Photos are written upright: a rotation stored in EXIF is applied to the
+  pixels. Other EXIF data and the colour profile are kept where the target
+  format can store them.
+- `-q/--quality` is 1-100, higher is better, and applies to the lossy formats
+  (`jpg`, `webp`, `avif`, `heic`). Without it they are written at 90. The
+  other formats are lossless; passing `-q` for them prints a note on stderr
+  and converts anyway.
+- An output is written under a temporary name and renamed when it is complete,
+  so a failed conversion never leaves a broken file behind.
 - A failed file does not stop the batch; the run exits `1` and reports which
   files failed.
-- `--dry-run` prints the exact backend command for each file.
-- A `%` in a file or directory name is taken literally, never as a
-  numbered-sequence escape such as `%d`. ImageMagick cannot be told to leave
-  one alone in an output path, so an output whose path contains `%` is written
-  under a temporary `jzr-tmp-...` name in the target directory and then
-  renamed; `--dry-run` shows that name and prints a note saying so.
-- `-q/--quality` is the JPEG-style knob, 1-100, higher is better. It behaves as
-  expected for the lossy formats (`jpg`, `webp`, `avif`, `heic`). For `png` and
-  `tiff` it only tunes compression -- those stay lossless -- and for `gif`,
-  `bmp`, `tga`, `ppm` and `ico` it does nothing. Either way the run prints a
-  note on stderr, so quality is never silently misapplied.
-- Quality maps per backend: ImageMagick gets `-quality`, ffmpeg gets `-q:v`
-  (inverted 2-31 scale) for JPEG, `-quality` for WebP, and `-crf` for AVIF.
+- `--dry-run` lists what would be converted and writes nothing.
 
-`jzr image formats` lists the supported extensions and which backends were
-found on `PATH`.
+With `--backend magick`:
+
+- `--dry-run` prints the exact ImageMagick command for each file.
+- For `png` and `tiff`, `-q` tunes compression rather than being ignored.
+- An output whose path contains `%` is written under a temporary
+  `jzr-tmp-...` name and then renamed, because ImageMagick would read the `%`
+  as a numbered-sequence escape; `--dry-run` prints a note saying so.
+- Some ImageMagick builds cannot write every format (HEIC on Windows, for
+  one). Such a conversion is reported as failed instead of leaving a file in
+  another format under the requested name.
+
+`jzr image formats` lists the supported extensions, the Pillow versions in
+use, and whether ImageMagick was found on `PATH`.
 
 ## Ports
 

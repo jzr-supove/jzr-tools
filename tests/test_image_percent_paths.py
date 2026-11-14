@@ -16,7 +16,6 @@ from click.testing import CliRunner
 
 from jzr_tools.cli import app
 from tests.test_images import (
-    HAS_FFMPEG,
     HAS_MAGICK,
     ONE_PIXEL_PNG,
     combined,
@@ -446,26 +445,6 @@ class PercentFailureAndExistingTargetTests(unittest.TestCase):
 
             self.assertEqual(result.exit_code, 0, combined(result))
             self.assertEqual(listing(root), before)
-
-
-@unittest.skipUnless(HAS_FFMPEG, "needs ffmpeg")
-class FfmpegPercentCounterpartTests(unittest.TestCase):
-    def test_percent_names_and_dirs_with_ffmpeg(self) -> None:
-        for stem in ("100%d", "50%", "%d0%bf%d1%80"):
-            with self.subTest(stem=stem), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                (root / f"{stem}.png").write_bytes(ONE_PIXEL_PNG)
-
-                result = convert(
-                    ["png2jpg", str(root / f"{stem}.png"), "-o", str(root / "o%d")],
-                    backend="ffmpeg",
-                )
-
-                self.assertEqual(result.exit_code, 0, combined(result))
-                self.assertEqual(
-                    listing(root), sorted([f"{stem}.png", "o%d", f"o%d/{stem}.jpg"])
-                )
-                self.assertEqual((root / "o%d" / f"{stem}.jpg").read_bytes()[:2], JPEG_MAGIC)
 
 
 if __name__ == "__main__":

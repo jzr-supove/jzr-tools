@@ -1,11 +1,13 @@
 """Plain Python image conversion helpers.
 
-Conversions are delegated to an external backend: ImageMagick (``magick``) or
-``ffmpeg``. Nothing here touches Click, so the logic stays testable on its own.
+Two backends convert files. ``pillow`` is built in (see ``pillow_engine``) and
+is the default. ``magick`` drives ImageMagick from PATH, for the formats and
+behaviours only it has. Nothing here touches Click, so the logic stays
+testable on its own.
 
-Both backends read ``%`` in a path as the start of a numbered-sequence escape
+ImageMagick reads ``%`` in a path as the start of a numbered-sequence escape
 (``%d``, ``%03d``). A ``%`` in a file or directory name is always meant
-literally here, so each backend is driven in a way that never expands it.
+literally here, so it is driven in a way that never expands it.
 """
 
 from __future__ import annotations
@@ -40,9 +42,8 @@ SUPPORTED_EXTENSIONS = frozenset(
 
 LOSSY_EXTENSIONS = frozenset({"avif", "heic", "heif", "jpeg", "jpg", "webp"})
 
-# Targets that can hold more than one frame, so ffmpeg must not be told to stop
-# after the first one.
-ANIMATED_EXTENSIONS = frozenset({"apng", "avif", "gif", "webp"})
+# Targets that can hold more than one frame; any other target gets the first.
+ANIMATED_EXTENSIONS = frozenset({"avif", "gif", "webp"})
 
 # Spellings of the same format, so `jzr image jpeg2png` also picks up `.jpg`.
 _EXTENSION_ALIASES = (
@@ -51,22 +52,32 @@ _EXTENSION_ALIASES = (
     frozenset({"heic", "heif"}),
 )
 
-BACKEND_PREFERENCE = ("magick", "ffmpeg")
+BACKENDS = ("pillow", "magick")
 
-# Formats a backend has no encoder or muxer for, so it fails on every file.
-_UNWRITABLE_EXTENSIONS = {"ffmpeg": frozenset({"heic", "heif"})}
-
-# Sources ffmpeg's image2 demuxer can read. A path that looks like a
-# numbered-sequence pattern is handed to that demuxer and expanded, so for
-# these formats a path containing `%` is opened with it explicitly, with
-# pattern matching turned off.
-_FFMPEG_IMAGE2_EXTENSIONS = frozenset(
-    {"bmp", "jpeg", "jpg", "png", "ppm", "tga", "tif", "tiff", "webp"}
+# What the first bytes of a file say it is, for the formats that say so. The
+# value is the name used in messages. `tga` has no signature.
+_SIGNATURE_FAMILIES = {
+    "avif": "AVIF",
+    "bmp": "BMP",
+    "gif": "GIF",
+    "heic": "HEIF",
+    "heif": "HEIF",
+    "ico": "ICO",
+    "jpeg": "JPEG",
+    "jpg": "JPEG",
+    "png": "PNG",
+    "ppm": "PPM",
+    "tif": "TIFF",
+    "tiff": "TIFF",
+    "webp": "WEBP",
+}
+_HEIF_BRANDS = frozenset(
+    {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm", b"hevs"}
 )
 
 
 class BackendUnavailableError(RuntimeError):
-    """Raised when no usable conversion backend is on PATH."""
+    """Raised when the requested backend is not on PATH."""
 
 
 def normalize_extension(value: str) -> str:
@@ -84,7 +95,7 @@ def equivalent_extensions(extension: str) -> frozenset[str]:
 
 
 def detect_backends() -> dict[str, list[str]]:
-    """Return the backends available on PATH, mapped to their argv prefix."""
+    """Return the external backends on PATH, mapped to their argv prefix."""
     found: dict[str, list[str]] = {}
 
     magick = shutil.which("magick")
@@ -95,41 +106,18 @@ def detect_backends() -> dict[str, list[str]]:
     if magick is not None:
         found["magick"] = [magick]
 
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is not None:
-        found["ffmpeg"] = [ffmpeg]
-
     return found
 
 
 def resolve_backend(preference: str = "auto") -> tuple[str, list[str]]:
-    """Pick a backend, honoring an explicit preference when given."""
-    available = detect_backends()
+    """Return the backend to use and its argv prefix (empty for Pillow)."""
+    if preference in {"auto", "pillow"}:
+        return "pillow", []
 
-    if preference != "auto":
-        executable = available.get(preference)
-        if executable is None:
-            raise BackendUnavailableError(f"Backend not found on PATH: {preference}")
-        return preference, executable
-
-    for name in BACKEND_PREFERENCE:
-        if name in available:
-            return name, available[name]
-
-    raise BackendUnavailableError(
-        "No conversion backend found. Install ImageMagick (magick) or ffmpeg."
-    )
-
-
-def unsupported_target(backend: str, target_extension: str) -> str | None:
-    """Explain why ``backend`` cannot write this format, or return ``None``."""
-    extension = normalize_extension(target_extension)
-    if extension not in _UNWRITABLE_EXTENSIONS.get(backend, frozenset()):
-        return None
-    return (
-        f"{backend} cannot write .{extension} files. "
-        "Use ImageMagick (--backend magick) or choose another format."
-    )
+    executable = detect_backends().get(preference)
+    if executable is None:
+        raise BackendUnavailableError(f"Backend not found on PATH: {preference}")
+    return preference, executable
 
 
 def quality_caveat(backend: str, target_extension: str) -> str | None:
@@ -140,6 +128,9 @@ def quality_caveat(backend: str, target_extension: str) -> str | None:
     extension = normalize_extension(target_extension)
     if extension in LOSSY_EXTENSIONS:
         return None
+
+    if backend == "pillow":
+        return f".{extension} is lossless; --quality is ignored"
 
     # ImageMagick reuses -quality for the zlib level of these lossless formats,
     # which is not the visual-quality knob it is for JPEG.
@@ -152,25 +143,6 @@ def quality_caveat(backend: str, target_extension: str) -> str | None:
     return f"{backend} ignores --quality for .{extension} output"
 
 
-def _scale_quality_to_qv(quality: int) -> int:
-    """Map a 1-100 quality onto ffmpeg's inverted 2-31 mjpeg scale."""
-    return 2 + round((100 - quality) * 29 / 99)
-
-
-def _ffmpeg_quality_args(target_extension: str, quality: int | None) -> list[str]:
-    if quality is None:
-        return []
-
-    extension = normalize_extension(target_extension)
-    if extension in {"jpg", "jpeg"}:
-        return ["-q:v", str(_scale_quality_to_qv(quality))]
-    if extension == "webp":
-        return ["-quality", str(quality)]
-    if extension in {"avif", "heic", "heif"}:
-        return ["-crf", str(round((100 - quality) * 63 / 99))]
-    return []
-
-
 def build_command(
     backend: str,
     executable: list[str],
@@ -180,58 +152,37 @@ def build_command(
     quality: int | None = None,
     overwrite: bool = True,
 ) -> list[str]:
-    """Build the argv used to convert ``source`` into ``target``."""
+    """Build the ImageMagick argv used to convert ``source`` into ``target``.
+
+    ``overwrite`` changes nothing here: ImageMagick always replaces its output,
+    so ``convert_file`` decides whether to run at all.
+    """
+    if backend != "magick":
+        raise ValueError(f"Unknown backend: {backend}")
+
     target_extension = normalize_extension(target.suffix)
     single_frame = target_extension not in ANIMATED_EXTENSIONS
 
-    if backend == "magick":
-        source_argument = str(source)
-        command = [*executable]
-        # A multi-frame source (GIF, ICO, TIFF) must be cut down to one frame,
-        # or it is written as `name-0.ext`, `name-1.ext`, ... instead of the
-        # target.
-        if not single_frame:
-            command.append(source_argument)
-        elif "%" not in source_argument:
-            command.append(source_argument + "[0]")
-        else:
-            # A frame selector makes ImageMagick expand `%d` escapes in the
-            # path, and whether `%%` escapes them depends on its version. A
-            # path without a selector is always read literally, so the other
-            # frames are dropped after reading instead.
-            command += [source_argument, "-delete", "1--1"]
-        if quality is not None:
-            command += ["-quality", str(quality)]
-        # `%d` escapes in the output path are expanded and cannot be escaped
-        # portably, so `convert_file` never passes a target containing `%`.
-        command.append(str(target))
-        return command
-
-    if backend == "ffmpeg":
-        command = [
-            *executable,
-            "-nostdin",
-            "-loglevel",
-            "error",
-            "-y" if overwrite else "-n",
-        ]
-        if (
-            "%" in str(source)
-            and normalize_extension(source.suffix) in _FFMPEG_IMAGE2_EXTENSIONS
-        ):
-            command += ["-f", "image2", "-pattern_type", "none"]
-        command += ["-i", str(source)]
-        command += _ffmpeg_quality_args(target_extension, quality)
-        if single_frame:
-            # `-update 1` also makes the image2 muxer take the name literally.
-            command += ["-frames:v", "1", "-update", "1"]
-        elif target_extension == "webp" and "%" in str(target):
-            # A `%d`-style name would otherwise select the image-sequence muxer.
-            command += ["-f", "webp"]
-        command.append(str(target))
-        return command
-
-    raise ValueError(f"Unknown backend: {backend}")
+    source_argument = str(source)
+    command = [*executable]
+    # A multi-frame source (GIF, ICO, TIFF) must be cut down to one frame, or
+    # it is written as `name-0.ext`, `name-1.ext`, ... instead of the target.
+    if not single_frame:
+        command.append(source_argument)
+    elif "%" not in source_argument:
+        command.append(source_argument + "[0]")
+    else:
+        # A frame selector makes ImageMagick expand `%d` escapes in the path,
+        # and whether `%%` escapes them depends on its version. A path without
+        # a selector is always read literally, so the other frames are dropped
+        # after reading instead.
+        command += [source_argument, "-delete", "1--1"]
+    if quality is not None:
+        command += ["-quality", str(quality)]
+    # `%d` escapes in the output path are expanded and cannot be escaped
+    # portably, so `convert_file` never passes a target containing `%`.
+    command.append(str(target))
+    return command
 
 
 @dataclass(frozen=True)
@@ -240,6 +191,7 @@ class ConversionResult:
 
     source: Path
     target: Path
+    # The external command, or empty when the built-in engine does the work.
     command: tuple[str, ...]
     status: str
     detail: str = ""
@@ -331,6 +283,82 @@ def find_sources(
     return matches
 
 
+def _sniff_format(path: Path) -> str | None:
+    """Name the format a file's first bytes declare, or ``None`` if unsure."""
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(16)
+    except OSError:
+        return None
+
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "PNG"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "JPEG"
+    if head[:6] in {b"GIF87a", b"GIF89a"}:
+        return "GIF"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "WEBP"
+    if head[:4] in {b"II*\x00", b"MM\x00*"}:
+        return "TIFF"
+    if head[4:8] == b"ftyp":
+        brand = head[8:12]
+        if brand in {b"avif", b"avis"}:
+            return "AVIF"
+        if brand in _HEIF_BRANDS:
+            return "HEIF"
+        return None  # `mif1` and the like are used by both families
+    if head[:4] == b"\x00\x00\x01\x00":
+        return "ICO"
+    if head[:2] == b"BM":
+        return "BMP"
+    if head[:1] == b"P" and head[1:2] in b"123456" and head[2:3] in b" \t\r\n":
+        return "PPM"
+    return None
+
+
+def _wrong_format(produced: Path, target: Path) -> str | None:
+    """Explain an output whose content is another format than its name says.
+
+    An ImageMagick build without an encoder for a format (HEIC on Windows)
+    warns, exits 0 and writes the image in another format under that name.
+    """
+    extension = normalize_extension(target.suffix)
+    expected = _SIGNATURE_FAMILIES.get(extension)
+    found = _sniff_format(produced)
+    if expected is None or found is None or found == expected:
+        return None
+    return (
+        f"magick wrote {found} data instead of .{extension}; "
+        "this ImageMagick build cannot write that format"
+    )
+
+
+def _convert_with_pillow(
+    source: Path, target: Path, *, quality: int | None, overwrite: bool, dry_run: bool
+) -> ConversionResult:
+    if source.resolve() == target.resolve():
+        return ConversionResult(source, target, (), "skipped", "source is the target")
+
+    if target.exists() and not overwrite:
+        return ConversionResult(source, target, (), "skipped", "target exists (use --overwrite)")
+
+    if dry_run:
+        return ConversionResult(source, target, (), "planned")
+
+    # Imported here so that planning and the ImageMagick path never pay for
+    # Pillow.
+    from jzr_tools.core import pillow_engine
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        pillow_engine.convert(source, target, quality=quality)
+    except (pillow_engine.ConversionError, OSError) as error:
+        return ConversionResult(source, target, (), "failed", str(error))
+
+    return ConversionResult(source, target, (), "converted")
+
+
 def convert_file(
     source: Path,
     target: Path,
@@ -342,10 +370,15 @@ def convert_file(
     dry_run: bool = False,
 ) -> ConversionResult:
     """Convert one file, returning what happened instead of raising."""
+    if backend == "pillow":
+        return _convert_with_pillow(
+            source, target, quality=quality, overwrite=overwrite, dry_run=dry_run
+        )
+
     # ImageMagick expands `%d` escapes in an output path and has no escape for
     # them that works across versions. Such a target is written under a
     # `%`-free name from inside its own directory, then renamed.
-    staged = backend == "magick" and "%" in str(target)
+    staged = "%" in str(target)
     if staged:
         work_dir = target.parent
         placeholder = Path(f"jzr-tmp-{secrets.token_hex(8)}{target.suffix}")
@@ -419,6 +452,11 @@ def convert_file(
             "failed",
             f"{backend} reported success but did not write {target.name}",
         )
+
+    wrong_format = _wrong_format(produced, target)
+    if wrong_format is not None:
+        produced.unlink(missing_ok=True)
+        return ConversionResult(source, target, command, "failed", wrong_format)
 
     if staged:
         try:

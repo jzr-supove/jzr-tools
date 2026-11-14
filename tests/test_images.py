@@ -24,7 +24,6 @@ ONE_PIXEL_PNG = base64.b64decode(
 )
 
 HAS_MAGICK = "magick" in detect_backends()
-HAS_FFMPEG = "ffmpeg" in detect_backends()
 
 
 def three_frame_gif() -> bytes:
@@ -63,7 +62,6 @@ def planned_targets(result: object) -> list[str]:
 
 
 MAGICK = ["magick"]
-FFMPEG = ["ffmpeg"]
 
 
 class MagickCommandTests(unittest.TestCase):
@@ -117,54 +115,29 @@ class MagickCommandTests(unittest.TestCase):
         self.assertEqual(command, ["magick", "a b.png[0]", "a b.jpg"])
 
 
-class FfmpegCommandTests(unittest.TestCase):
-    def _command(self, source: str, target: str) -> list[str]:
-        return build_command("ffmpeg", FFMPEG, Path(source), Path(target))
+class RemovedFfmpegBackendTests(unittest.TestCase):
+    def test_build_command_rejects_ffmpeg(self) -> None:
+        with self.assertRaises(ValueError):
+            build_command("ffmpeg", ["ffmpeg"], Path("a.png"), Path("a.jpg"))
 
-    def test_pattern_type_none_precedes_input_for_percent_image2_sources(self) -> None:
-        for ext in ("bmp", "jpeg", "jpg", "png", "ppm", "tga", "tif", "tiff", "webp"):
-            with self.subTest(source_ext=ext):
-                command = self._command(f"100%d.{ext}", "out.gif")
-                self.assertIn("-pattern_type", command)
-                index = command.index("-pattern_type")
-                self.assertEqual(command[index + 1], "none")
-                self.assertLess(index, command.index("-i"))
+    def test_detect_backends_only_ever_reports_magick(self) -> None:
+        with mock.patch(
+            "jzr_tools.core.images.shutil.which",
+            side_effect=lambda name: f"/usr/bin/{name}",
+        ):
+            self.assertEqual(set(detect_backends()), {"magick"})
 
-    def test_percent_image2_sources_force_the_image2_demuxer(self) -> None:
-        # `-pattern_type` only exists on image2, and ffmpeg picks that demuxer
-        # by itself only when the name is a valid sequence pattern.
-        for name in ("100%d.png", "50%.png", "%d0%bf.jpg", "d%d/shot.png"):
-            with self.subTest(source=name):
-                command = self._command(name, "out.jpg")
-                index = command.index("-i")
-                self.assertEqual(
-                    command[index - 4 : index], ["-f", "image2", "-pattern_type", "none"]
-                )
+    def test_cli_rejects_ffmpeg_as_a_backend_choice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source = Path(tmpdir) / "x.png"
+            source.write_bytes(ONE_PIXEL_PNG)
+            for args in (["-b", "ffmpeg"], ["--backend", "ffmpeg"]):
+                with self.subTest(args=args):
+                    result = runner.invoke(app, ["image", "png2jpg", str(source), *args])
 
-    def test_pattern_type_not_added_without_percent(self) -> None:
-        command = self._command("shot.png", "shot.jpg")
-        self.assertNotIn("-pattern_type", command)
-
-    def test_pattern_type_not_added_for_non_image2_sources(self) -> None:
-        for ext in ("gif", "avif", "heic", "ico"):
-            with self.subTest(source_ext=ext):
-                command = self._command(f"100%d.{ext}", "out.png")
-                self.assertNotIn("-pattern_type", command)
-
-    def test_webp_target_with_percent_forces_webp_muxer_before_target(self) -> None:
-        command = self._command("shot.png", "100%d.webp")
-        self.assertIn("-f", command)
-        index = command.index("-f")
-        self.assertEqual(command[index + 1], "webp")
-        self.assertLess(index + 1, len(command) - 1)
-        self.assertEqual(command[-1], "100%d.webp")
-
-    def test_format_flag_not_added_for_plain_or_other_targets(self) -> None:
-        self.assertNotIn("-f", self._command("shot.png", "shot.webp"))
-        self.assertNotIn("-f", self._command("shot.png", "100%d.jpg"))
-
-    def test_target_path_is_not_altered_by_ffmpeg_command(self) -> None:
-        self.assertEqual(self._command("a.png", "100%d.jpg")[-1], "100%d.jpg")
+                    self.assertEqual(result.exit_code, 2, combined(result))
+                    self.assertIn("ffmpeg", combined(result))
+                    self.assertFalse((Path(tmpdir) / "x.jpg").exists())
 
 
 class ConvertFileOutcomeTests(unittest.TestCase):
@@ -272,19 +245,16 @@ class MagickPercentTargetTests(unittest.TestCase):
             run_mock.assert_not_called()
             self.assertFalse(target.parent.exists())
 
-    def test_ffmpeg_and_plain_magick_targets_are_not_staged(self) -> None:
+    def test_plain_magick_targets_are_not_staged(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source = Path(tmpdir) / "100%d.png"
             source.write_bytes(ONE_PIXEL_PNG)
-            cases = (("ffmpeg", FFMPEG, "100%d.jpg"), ("magick", MAGICK, "plain.jpg"))
-            for backend, executable, name in cases:
-                with self.subTest(backend=backend):
-                    target = Path(tmpdir) / name
-                    result = convert_file(
-                        source, target, backend=backend, executable=executable, dry_run=True
-                    )
-                    self.assertEqual(result.command[-1], str(target))
-                    self.assertEqual(result.detail, "")
+            target = Path(tmpdir) / "plain.jpg"
+            result = convert_file(
+                source, target, backend="magick", executable=MAGICK, dry_run=True
+            )
+            self.assertEqual(result.command[-1], str(target))
+            self.assertEqual(result.detail, "")
 
 
 class PlanTargetsTests(unittest.TestCase):
@@ -450,57 +420,6 @@ class InvalidPatternTests(unittest.TestCase):
             self._assert_clean_usage_error(result)
 
 
-class UnsupportedTargetTests(unittest.TestCase):
-    def test_ffmpeg_cannot_write_heic_or_heif(self) -> None:
-        for ext in ("heic", "heif"):
-            with self.subTest(ext=ext):
-                message = images.unsupported_target("ffmpeg", ext)
-                self.assertIsNotNone(message)
-                self.assertIn(ext, message)
-                self.assertIn("ImageMagick", message)
-
-    def test_supported_combinations_return_none(self) -> None:
-        for backend, ext in (("magick", "heic"), ("ffmpeg", "jpg"), ("ffmpeg", "avif")):
-            with self.subTest(backend=backend, ext=ext):
-                self.assertIsNone(images.unsupported_target(backend, ext))
-
-    def _invoke(self, extra: list[str]):  # noqa: ANN202
-        with tempfile.TemporaryDirectory() as tmpdir:
-            source = Path(tmpdir) / "x.png"
-            source.write_bytes(ONE_PIXEL_PNG)
-            failed = mock.Mock(returncode=1, stdout="", stderr="boom")
-            with (
-                mock.patch(
-                    "jzr_tools.commands.image.resolve_backend",
-                    return_value=("ffmpeg", FFMPEG),
-                ),
-                mock.patch(
-                    "jzr_tools.core.images.subprocess.run", return_value=failed
-                ) as run_mock,
-            ):
-                result = runner.invoke(
-                    app, ["image", "png2heic", str(source), "-b", "ffmpeg", *extra]
-                )
-            return result, run_mock
-
-    def _assert_rejected(self, result: object, run_mock: mock.Mock) -> None:
-        output = combined(result)
-        self.assertEqual(result.exit_code, 1, output)
-        self.assertIn("ImageMagick", output)
-        self.assertIn("heic", output.lower())
-        self.assertNotIn("fail ", output)
-        run_mock.assert_not_called()
-
-    def test_cli_rejects_ffmpeg_heic_target(self) -> None:
-        result, run_mock = self._invoke([])
-        self._assert_rejected(result, run_mock)
-
-    def test_cli_rejects_ffmpeg_heic_target_in_dry_run(self) -> None:
-        result, run_mock = self._invoke(["--dry-run"])
-        self._assert_rejected(result, run_mock)
-        self.assertNotIn("planned", result.stdout)
-
-
 @unittest.skipUnless(HAS_MAGICK, "needs ImageMagick")
 class MagickEndToEndTests(unittest.TestCase):
     def test_multi_frame_gif_converts_to_single_png_and_second_run_skips(self) -> None:
@@ -534,21 +453,6 @@ class MagickEndToEndTests(unittest.TestCase):
             self.assertEqual(
                 sorted(p.name for p in root.iterdir()), ["100%d.jpg", "100%d.png"]
             )
-
-
-@unittest.skipUnless(HAS_FFMPEG, "needs ffmpeg")
-class FfmpegEndToEndTests(unittest.TestCase):
-    def test_percent_in_file_name_is_preserved(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            (root / "100%d.png").write_bytes(ONE_PIXEL_PNG)
-
-            result = runner.invoke(
-                app, ["image", "png2jpg", str(root / "100%d.png"), "-b", "ffmpeg"]
-            )
-
-            self.assertEqual(result.exit_code, 0, combined(result))
-            self.assertTrue((root / "100%d.jpg").is_file())
 
 
 if __name__ == "__main__":

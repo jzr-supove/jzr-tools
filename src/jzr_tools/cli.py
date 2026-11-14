@@ -19,10 +19,7 @@ from jzr_tools import __version__
 # The help is repeated here so listing commands does not import them; a test
 # keeps it equal to each command's own short help.
 _COMMANDS: dict[str, tuple[str, str]] = {
-    "image": (
-        "jzr_tools.commands.image:app",
-        "Convert images using ImageMagick or ffmpeg.",
-    ),
+    "image": ("jzr_tools.commands.image:app", "Convert images between formats."),
     "text": ("jzr_tools.commands.text:app", "Text utilities."),
     "port": ("jzr_tools.commands.network:app", "Inspect and free local ports."),
     "host": ("jzr_tools.commands.host:app", "Inspect and clean up this machine."),

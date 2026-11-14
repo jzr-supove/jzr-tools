@@ -14,7 +14,7 @@ from unittest import mock
 from click.testing import CliRunner
 
 from jzr_tools.cli import app
-from jzr_tools.core.images import BackendUnavailableError, SUPPORTED_EXTENSIONS, detect_backends
+from jzr_tools.core.images import BackendUnavailableError, SUPPORTED_EXTENSIONS
 
 runner = CliRunner()
 
@@ -406,17 +406,18 @@ class ConvertOptionTests(unittest.TestCase):
 
 
 class ImageFormatsTests(unittest.TestCase):
-    def test_formats_lists_extensions_and_each_backend(self) -> None:
+    def test_formats_lists_extensions_pillow_and_magick_only(self) -> None:
         result = runner.invoke(app, ["image", "formats"])
 
         self.assertEqual(result.exit_code, 0, combined(result))
         lines = result.stdout.splitlines()
+        self.assertEqual(len(lines), 3, lines)
         self.assertEqual(
             lines[0], "extensions: " + " ".join(sorted(SUPPORTED_EXTENSIONS))
         )
-        self.assertTrue(lines[1].startswith("magick: "), lines)
-        self.assertTrue(lines[2].startswith("ffmpeg: "), lines)
-        self.assertIn("cannot write: heic heif", lines[2])
+        self.assertTrue(lines[1].startswith("pillow: "), lines)
+        self.assertTrue(lines[2].startswith("magick: "), lines)
+        self.assertNotIn("ffmpeg", result.stdout)
 
     def test_image_help_lists_subcommands(self) -> None:
         result = runner.invoke(app, ["image", "-h"])
@@ -426,7 +427,6 @@ class ImageFormatsTests(unittest.TestCase):
         self.assertIn("formats", result.stdout)
 
 
-@unittest.skipUnless(detect_backends(), "needs ImageMagick or ffmpeg")
 class RealConversionTests(unittest.TestCase):
     def test_extension_less_source_is_converted_and_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -442,7 +442,7 @@ class RealConversionTests(unittest.TestCase):
             self.assertTrue((root / "shot.jpg").is_file())
             self.assertTrue((root / "shot.v2.jpg").is_file())
             self.assertIn(f"{root / 'shot.png'} -> {root / 'shot.jpg'}", result.stdout)
-            self.assertRegex(result.stdout, r"(magick|ffmpeg): 2 converted")
+            self.assertRegex(result.stdout, r"pillow: 2 converted")
 
     def test_mismatched_source_writes_nothing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
