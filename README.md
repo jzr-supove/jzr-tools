@@ -47,6 +47,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr image formats` | List supported extensions and the conversion engines available |
 | `jzr video convert` | Convert video to mp4, mov, mkv or webm, or take the sound out as audio |
 | `jzr video <from>2<to>` | Shorthand for a format pair, e.g. `jzr video mov2mp4` |
+| `jzr video compress` | Make videos smaller as H.264 MP4, at a quality or under a size (`--size 25MB`) |
 | `jzr video info` | Show the container, duration, size and streams of video files |
 | `jzr video formats` | List video targets, the ffmpeg in use and which encoders it has |
 | `jzr video trim` | Cut a time range out of video files, exactly or instantly from a keyframe |
@@ -283,6 +284,56 @@ targets), `-d/--dir`, `-p/--pattern`, `-r/--recursive`, `-o/--output`,
   which encoders the build has.
 - `--dry-run`, the temporary `jzr-tmp-...` output and the progress line work
   as in `jzr audio convert`.
+
+### Video compression
+
+`jzr video compress` makes video files smaller. The output is always MP4
+with H.264 and AAC, so it plays everywhere, and is named
+`<name>_compressed.mp4`:
+
+```bash
+jzr video compress clip.mov                        # constant quality, at most 1080p
+jzr video compress clip.mov -q small --resize 720
+jzr video compress clip.mov --size 25MB            # at or under 25 MB
+jzr video compress clip.mov --for discord -o share.mp4
+jzr video compress -d ~/Videos -r --for email --outdir small
+```
+
+Options: `-q/--quality` (`high`, `balanced`, `small`; default `balanced`),
+`-s/--size SIZE`, `--for email|discord`, `--resize N`, `--no-audio`,
+`--strip`, `-d/--dir`, `-p/--pattern`, `-r/--recursive`, `-o/--output`,
+`--outdir`, `--overwrite`, `--dry-run`.
+
+- Without a size, the video is encoded at constant quality, with the short
+  edge capped at 1080 pixels (`--resize N` sets another cap; never scaled
+  up). A result that is not smaller than its source is thrown away:
+  `skip clip.mp4: already smaller than the result`.
+- `--size` takes decimal sizes (`25MB`, `8M`, `500KB`, `1.5GB`). The video is
+  encoded in two passes at the bitrate that fills the size, less 4% for the
+  container. The highest resolution of the source (at most 1080p), 720p,
+  480p and 360p that still has enough bits for each pixel is used, and the
+  audio is 128 kb/s, or 96 kb/s when the size is tight.
+- `--for email` is 18 MB (mail adds about a third for encoding, so this fits
+  a 25 MB limit) and `--for discord` is 20 MB, Discord's limit for free
+  accounts.
+- A size that cannot work is refused before anything is encoded, with the
+  smallest that would:
+  `too small for a 12:04 video; the smallest is about 42 MB (or use --no-audio)`.
+  A source already at or under the size is skipped.
+- If the encoder still overshoots, the file is encoded once more at a lower
+  bitrate; if that is still too big, the file fails. A result over the size
+  is never kept, and an existing output is only replaced by a result that
+  fits.
+- AAC audio that is already stereo and no larger than the planned bitrate
+  is copied; other audio is encoded, and surround is mixed down to stereo.
+- Tags such as the title, date and `location` are kept; `--strip` leaves
+  every tag out. Apple's `com.apple.quicktime.*` keys (the device, and the
+  location in iPhone clips) are not written to MP4 by ffmpeg, so they are
+  gone either way. The video is turned upright, so a rotated phone clip
+  needs no rotation flag.
+- A directory scan picks every video file except earlier
+  `..._compressed` results. Sources, outputs, `--dry-run` (both passes are
+  shown), the progress line and failures work as in `jzr video convert`.
 
 ### Audio conversion
 

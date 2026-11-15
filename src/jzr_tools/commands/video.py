@@ -318,6 +318,169 @@ def _build_pair_command(name: str, source_extension: str, target_extension: str)
     return command
 
 
+
+# --- compress ------------------------------------------------------------------
+
+_COMPRESS_PRESETS = ("email", "discord")
+
+
+def _size(ctx: click.Context, param: click.Parameter, value: str | None) -> int | None:
+    if value is None:
+        return None
+    from jzr_tools.core.media import parse_size
+
+    try:
+        return parse_size(value)
+    except ValueError as error:
+        raise click.BadParameter(str(error), ctx=ctx, param=param) from error
+
+
+@app.command()
+@batch_options(
+    click.option(
+        "-q",
+        "--quality",
+        type=click.Choice(VIDEO_QUALITIES),
+        default=None,
+        help="Quality when no size is given.  [default: balanced]",
+    ),
+    click.option(
+        "-s",
+        "--size",
+        default=None,
+        callback=_size,
+        metavar="SIZE",
+        help="Stay at or under this size, e.g. 25MB, 8M, 500KB (two passes).",
+    ),
+    click.option(
+        "--for",
+        "preset",
+        type=click.Choice(_COMPRESS_PRESETS),
+        default=None,
+        help="A named size: email (18 MB) or discord (20 MB).",
+    ),
+    click.option(
+        "--resize",
+        type=click.IntRange(min=2),
+        metavar="N",
+        default=None,
+        help="Highest short edge in pixels (default 1080); never scales up.",
+    ),
+    click.option("--no-audio", is_flag=True, help="Leave the audio out."),
+    click.option(
+        "--strip",
+        is_flag=True,
+        help="Leave out the metadata (title, location, dates).",
+    ),
+)
+def compress(
+    sources: tuple[Path, ...],
+    directory: Path | None,
+    pattern: str | None,
+    recursive: bool,
+    output: Path | None,
+    outdir: Path | None,
+    quality: str | None,
+    size: int | None,
+    preset: str | None,
+    resize: int | None,
+    no_audio: bool,
+    strip: bool,
+    overwrite: bool,
+    dry_run: bool,
+) -> None:
+    """Make video files smaller, as H.264 and AAC in MP4.
+
+    Each file is written as <name>_compressed.mp4. Without --size it is
+    encoded at constant quality, at most 1080p, and a result that is not
+    smaller than its source is not kept. With --size (or --for) it is
+    encoded in two passes to come out at or under that size, at the highest
+    resolution the size allows; a size that cannot work is refused before
+    encoding, with the smallest size that would.
+    """
+    import shlex
+
+    from jzr_tools.core import compress as compressor
+    from jzr_tools.core import ffmpeg
+    from jzr_tools.core.batch import find_sources, normalize_extension
+
+    regex = compile_pattern(pattern)
+    check_output(output, sources=sources, outdir=outdir)
+    if output is not None and normalize_extension(output.suffix) != "mp4":
+        raise click.UsageError(f"--output {output} does not end in .mp4.")
+    if size is not None and preset is not None:
+        raise click.UsageError("--size and --for cannot be used together.")
+    if preset is not None:
+        size = compressor.COMPRESS_PRESETS[preset]
+    options = compressor.CompressOptions(
+        quality=quality, size=size, resize=resize, no_audio=no_audio, strip=strip
+    )
+    try:
+        compressor.check_compress_options(options)
+    except ValueError as error:
+        message = str(error)
+        if preset is not None:
+            message = message.replace("--size", "--size or --for")
+        raise click.UsageError(f"{message}.") from error
+
+    if sources:
+        if directory is not None or recursive:
+            raise click.UsageError(
+                "--dir and --recursive only apply when no SOURCES are listed."
+            )
+        selected = [resolve_source(path, None) for path in sources]
+        if regex is not None:
+            selected = [path for path in selected if regex.search(path.name) is not None]
+        root = None
+    else:
+        root = directory if directory is not None else Path(".")
+        found = find_sources(root, extensions=VIDEO_EXTENSIONS, pattern=regex, recursive=recursive)
+        # Earlier results are not compressed again.
+        selected = [path for path in found if not path.stem.endswith("_compressed")]
+
+    if not selected:
+        click.echo("No matching files.", err=True)
+        raise click.exceptions.Exit(1)
+
+    tools = ffmpeg.Tools(*require_tools("ffmpeg", "ffprobe"))
+    if output is not None:
+        targets = [output]
+    else:
+        targets = compressor.compress_targets(selected, outdir=outdir, root=root)
+
+    counts: Counter[str] = Counter()
+    for source, target in zip(selected, targets):
+        progress = ProgressLine(source.name)
+
+        def show(update: ffmpeg.Progress, name: str = source.name) -> None:
+            if update.steps > 1:
+                progress.label = f"{name} (pass {update.step}/{update.steps})"
+            progress(update)
+
+        try:
+            outcome = compressor.compress_file(
+                source,
+                target,
+                tools=tools,
+                options=options,
+                overwrite=overwrite,
+                dry_run=dry_run,
+                on_progress=show if progress.enabled else None,
+            )
+        finally:
+            progress.clear()
+        result = outcome.result
+        counts[result.status] += 1
+        if result.status == "planned":
+            for line in outcome.commands:
+                click.echo(shlex.join(line))
+            if result.detail:
+                click.echo(f"note: {result.detail}", err=True)
+        else:
+            report(result)
+
+    summarize("ffmpeg", counts)
+
 app.add_command(
     info_command(
         tags=False,

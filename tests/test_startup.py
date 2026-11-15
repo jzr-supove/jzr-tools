@@ -470,6 +470,21 @@ class MediaStartupTests(_ObservedTestCase):
                 self.assertIn("Usage:", obs.stdout)
 
 
+class CompressStartupTests(_ObservedTestCase):
+    def test_help_calls_never_load_the_compress_code(self) -> None:
+        for args in (["--help"], ["video", "-h"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, ["jzr_tools.core.compress"])
+
+    def test_video_group_help_lists_compress(self) -> None:
+        obs = self.run_cli("video", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("compress", listed)
+
+
 class AudioTagsStartupTests(_ObservedTestCase):
     def test_calls_that_do_not_read_tags_never_load_mutagen(self) -> None:
         cases = [
