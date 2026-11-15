@@ -5,6 +5,8 @@
   the target takes the video's sound.
 * ``jzr video mov2mp4 ...`` is shorthand for ``convert --from mov --to mp4``;
   any ``<from>2<to>`` pair is resolved on demand.
+* ``jzr video gif [SOURCES]...`` makes animated GIFs, optionally of a time
+  range; ``convert --to gif`` makes the same GIF with the defaults.
 * ``jzr video info FILE...`` describes video files.
 * ``jzr video formats`` lists the targets and what the ffmpeg build can do.
 """
@@ -31,7 +33,7 @@ from jzr_tools.commands._media import (
     info_command,
     resolve_source,
 )
-from jzr_tools.commands._trim import trim_command
+from jzr_tools.commands._trim import time_options, trim_command
 from jzr_tools.core.media import (
     AUDIO_FORMATS,
     VIDEO_CODECS,
@@ -42,8 +44,8 @@ from jzr_tools.core.media import (
 )
 
 _PAIR_PATTERN = re.compile(r"^([a-z0-9]+)2([a-z0-9]+)$")
-# What `convert --to` takes in this version: containers and audio formats.
-_CONVERT_TARGETS = VIDEO_CONTAINERS + AUDIO_FORMATS
+# What `convert --to` takes: containers, audio formats and gif.
+_CONVERT_TARGETS = VIDEO_TARGETS
 # Extensions that already are the target container, left alone by a scan.
 _SAME_CONTAINER = {"mp4": frozenset({"mp4", "m4v"})}
 
@@ -173,6 +175,8 @@ def _convert(
     dry_run: bool,
 ) -> None:
     """Select the sources for ``convert`` or a pair command, then convert them."""
+    import functools
+
     from jzr_tools.core import ffmpeg, media, transcode
     from jzr_tools.core.batch import find_sources, normalize_extension, plan_targets
 
@@ -213,7 +217,14 @@ def _convert(
 
     tools = ffmpeg.Tools(*require_tools("ffmpeg", "ffprobe"))
 
-    if target_extension in AUDIO_FORMATS:
+    if target_extension == "gif":
+        from jzr_tools.core import gif, trim
+
+        def plan(info: media.MediaInfo, _keyframe: float | None) -> trim.TrimPlan:
+            return gif.plan_gif(info, trim.TrimRange())
+
+        convert_file = functools.partial(trim.trim_file, plan=plan)
+    elif target_extension in AUDIO_FORMATS:
         if bitrate is not None:
             caveat = media.bitrate_caveat(target_extension)
             if caveat is not None:
@@ -223,10 +234,13 @@ def _convert(
         def plan(info: media.MediaInfo) -> media.Plan:
             return media.plan_audio_convert(info, target_extension, audio_options)
 
+        convert_file = functools.partial(transcode.convert_file, plan=plan)
     else:
 
         def plan(info: media.MediaInfo) -> media.Plan:
             return media.plan_convert(info, target_extension, video_options)
+
+        convert_file = functools.partial(transcode.convert_file, plan=plan)
 
     if output is not None:
         targets = [output]
@@ -237,11 +251,10 @@ def _convert(
     for source, target in zip(selected, targets):
         progress = ProgressLine(source.name)
         try:
-            result = transcode.convert_file(
+            result = convert_file(
                 source,
                 target,
                 tools=tools,
-                plan=plan,
                 overwrite=overwrite,
                 dry_run=dry_run,
                 on_progress=progress if progress.enabled else None,
@@ -261,8 +274,8 @@ def _convert(
     "target",
     default=None,
     help=(
-        "Target format: mp4, mov, mkv or webm, or mp3, m4a, opus, ogg, flac or wav "
-        "for the sound only. Taken from --output when left out."
+        "Target format: mp4, mov, mkv or webm, mp3, m4a, opus, ogg, flac or wav "
+        "for the sound only, or gif. Taken from --output when left out."
     ),
 )
 @click.option(
@@ -286,7 +299,8 @@ def convert(
     video file in --dir that is not already in the target container. Each
     stream is copied when the target can hold it, which is quick and loses
     nothing; otherwise it is encoded (H.264 and AAC, or VP9 and Opus for
-    webm). --codec, --resize and --fps make the video encode.
+    webm). --codec, --resize and --fps make the video encode. --to gif
+    makes the GIF 'jzr video gif' makes with its defaults.
     """
     if target is not None:
         target_extension = _target_format(target, "--to")
@@ -480,6 +494,121 @@ def compress(
             report(result)
 
     summarize("ffmpeg", counts)
+
+
+# --- gif -----------------------------------------------------------------------
+
+
+@app.command()
+@batch_options(
+    *time_options("GIF"),
+    click.option(
+        "--width",
+        type=click.IntRange(min=2),
+        default=480,
+        show_default=True,
+        metavar="N",
+        help="Widest the GIF may be, in pixels; never scales up.",
+    ),
+    click.option(
+        "--fps",
+        type=click.FloatRange(min=0, min_open=True),
+        default=15,
+        show_default=True,
+        metavar="N",
+        help="Highest frame rate; a slower video keeps its own.",
+    ),
+)
+def gif(
+    sources: tuple[Path, ...],
+    directory: Path | None,
+    pattern: str | None,
+    recursive: bool,
+    output: Path | None,
+    outdir: Path | None,
+    start: float | None,
+    end: float | None,
+    duration: float | None,
+    width: int,
+    fps: float,
+    overwrite: bool,
+    dry_run: bool,
+) -> None:
+    """Make animated GIFs from video files.
+
+    Each file becomes <name>.gif, of the whole video or of the part between
+    --start and --end (or --duration). The GIF is at most --width pixels
+    wide and --fps frames a second, its colours come from a palette made
+    for the clip, and it loops forever. GIFs grow fast: one longer than 30
+    seconds gets a note with the size to expect.
+
+    Times are seconds (90, 7.5) or [H:]MM:SS[.mmm] (1:30, 0:01:30.250).
+    """
+    from jzr_tools.core import ffmpeg, trim
+    from jzr_tools.core import gif as gifs
+    from jzr_tools.core.batch import find_sources, normalize_extension, plan_targets
+
+    regex = compile_pattern(pattern)
+    if start is None and end is None and duration is None:
+        rng = trim.TrimRange()
+    else:
+        try:
+            rng = trim.make_range(start, end, duration)
+        except ValueError as error:
+            raise click.UsageError(f"{error}.") from error
+    check_output(output, sources=sources, outdir=outdir)
+    if output is not None and normalize_extension(output.suffix) != "gif":
+        raise click.UsageError(f"--output {output} does not end in .gif.")
+    options = gifs.GifOptions(width=width, fps=fps)
+
+    if sources:
+        if directory is not None or recursive:
+            raise click.UsageError(
+                "--dir and --recursive only apply when no SOURCES are listed."
+            )
+        selected = [resolve_source(path, None) for path in sources]
+        if regex is not None:
+            selected = [path for path in selected if regex.search(path.name) is not None]
+        root = None
+    else:
+        root = directory if directory is not None else Path(".")
+        selected = find_sources(
+            root, extensions=VIDEO_EXTENSIONS, pattern=regex, recursive=recursive
+        )
+
+    if not selected:
+        click.echo("No matching files.", err=True)
+        raise click.exceptions.Exit(1)
+
+    tools = ffmpeg.Tools(*require_tools("ffmpeg", "ffprobe"))
+    if output is not None:
+        targets = [output]
+    else:
+        targets = plan_targets(selected, "gif", outdir=outdir, root=root)
+
+    def plan(info: object, _keyframe: float | None) -> trim.TrimPlan:
+        return gifs.plan_gif(info, rng, options)
+
+    counts: Counter[str] = Counter()
+    for source, target in zip(selected, targets):
+        progress = ProgressLine(source.name)
+        try:
+            result = trim.trim_file(
+                source,
+                target,
+                tools=tools,
+                plan=plan,
+                overwrite=overwrite,
+                dry_run=dry_run,
+                on_progress=progress if progress.enabled else None,
+            )
+        finally:
+            progress.clear()
+        counts[result.status] += 1
+        report(result)
+
+    summarize("ffmpeg", counts)
+
 
 app.add_command(
     info_command(

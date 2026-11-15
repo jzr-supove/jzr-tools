@@ -664,6 +664,22 @@ def check_convert_options(
     Raises ``ValueError`` with the message for the user.
     """
     target = _target(target_ext)
+    if target == "gif":
+        given = (
+            ("--codec", options.codec is not None),
+            ("--quality", options.quality is not None),
+            ("--crf", options.crf is not None),
+            ("--resize", options.resize is not None),
+            ("--fps", options.fps is not None),
+            ("--no-audio", options.no_audio),
+            ("--bitrate", bitrate is not None),
+        )
+        for name, present in given:
+            if present:
+                raise ValueError(
+                    f"{name} does not apply to .gif; 'jzr video gif' has the GIF options"
+                )
+        return
     if target in _COPYABLE:
         given = (
             ("--codec", options.codec is not None),

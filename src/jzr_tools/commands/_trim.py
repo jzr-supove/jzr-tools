@@ -41,6 +41,33 @@ def _time(ctx: click.Context, param: click.Parameter, value: str | None) -> floa
         raise click.BadParameter(str(error), ctx=ctx, param=param) from error
 
 
+def time_options(what: str) -> tuple:
+    """The ``--start``, ``--end`` and ``--duration`` options, for ``what``."""
+    return (
+        click.option(
+            "--start",
+            default=None,
+            metavar="TIME",
+            callback=_time,
+            help=f"Where the {what} starts.  [default: 0]",
+        ),
+        click.option(
+            "--end",
+            default=None,
+            metavar="TIME",
+            callback=_time,
+            help=f"Where the {what} ends.  [default: the end of the file]",
+        ),
+        click.option(
+            "--duration",
+            default=None,
+            metavar="TIME",
+            callback=_time,
+            help=f"How long the {what} lasts, instead of --end.",
+        ),
+    )
+
+
 _VIDEO_HELP = """Cut a time range out of video files.
 
 The cut is exact by default: it starts on the asked frame and lasts the
@@ -84,30 +111,7 @@ def trim_command(kind: str) -> click.Command:
         )
 
     @click.command(name="trim", help=_VIDEO_HELP if video else _AUDIO_HELP)
-    @batch_options(
-        click.option(
-            "--start",
-            default=None,
-            metavar="TIME",
-            callback=_time,
-            help="Where the cut starts.  [default: 0]",
-        ),
-        click.option(
-            "--end",
-            default=None,
-            metavar="TIME",
-            callback=_time,
-            help="Where the cut ends.  [default: the end of the file]",
-        ),
-        click.option(
-            "--duration",
-            default=None,
-            metavar="TIME",
-            callback=_time,
-            help="How long the cut lasts, instead of --end.",
-        ),
-        mode,
-    )
+    @batch_options(*time_options("cut"), mode)
     def command(
         sources: tuple[Path, ...],
         directory: Path | None,

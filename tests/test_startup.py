@@ -485,6 +485,22 @@ class CompressStartupTests(_ObservedTestCase):
         self.assertIn("compress", listed)
 
 
+class GifStartupTests(_ObservedTestCase):
+    def test_video_group_help_lists_gif(self) -> None:
+        obs = self.run_cli("video", "--help")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("gif", listed)
+        self.assert_not_loaded(obs, ["jzr_tools.core.gif"])
+
+    def test_gif_help_exits_zero_and_loads_no_heavy_module(self) -> None:
+        obs = self.run_cli("video", "gif", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        self.assertIn("--width", obs.stdout)
+        self.assert_not_loaded(obs, HEAVY_MODULES)
+
+
 class AudioTagsStartupTests(_ObservedTestCase):
     def test_calls_that_do_not_read_tags_never_load_mutagen(self) -> None:
         cases = [

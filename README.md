@@ -45,12 +45,13 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr image convert` | Convert images between formats, one file or a whole directory |
 | `jzr image <from>2<to>` | Shorthand for a format pair, e.g. `jzr image png2jpg` |
 | `jzr image formats` | List supported extensions and the conversion engines available |
-| `jzr video convert` | Convert video to mp4, mov, mkv or webm, or take the sound out as audio |
+| `jzr video convert` | Convert video to mp4, mov, mkv or webm, take the sound out as audio, or make a GIF |
 | `jzr video <from>2<to>` | Shorthand for a format pair, e.g. `jzr video mov2mp4` |
 | `jzr video compress` | Make videos smaller as H.264 MP4, at a quality or under a size (`--size 25MB`) |
 | `jzr video info` | Show the container, duration, size and streams of video files |
 | `jzr video formats` | List video targets, the ffmpeg in use and which encoders it has |
 | `jzr video trim` | Cut a time range out of video files, exactly or instantly from a keyframe |
+| `jzr video gif` | Make a looping animated GIF of a video, or of part of it |
 | `jzr audio convert` | Convert audio files to mp3, m4a, opus, ogg, flac or wav |
 | `jzr audio <from>2<to>` | Shorthand for a format pair, e.g. `jzr audio wav2mp3` |
 | `jzr audio info` | Show the format, streams and tags of audio files |
@@ -227,9 +228,10 @@ when reporting a problem.
 
 ### Video conversion
 
-`jzr video convert` turns video files into `mp4`, `mov`, `mkv` or `webm`, or
-takes their sound out as `mp3`, `m4a`, `opus`, `ogg`, `flac` or `wav`. It
-picks its sources and outputs the way `jzr audio convert` does:
+`jzr video convert` turns video files into `mp4`, `mov`, `mkv` or `webm`,
+takes their sound out as `mp3`, `m4a`, `opus`, `ogg`, `flac` or `wav`, or
+makes a `gif`. It picks its sources and outputs the way `jzr audio convert`
+does:
 
 ```bash
 jzr video convert clip.mov --to mp4                # one file
@@ -240,6 +242,7 @@ jzr video convert clip.mp4 --to mp4 --codec h264 -o plays-everywhere.mp4
 jzr video convert clip.mov --to mp4 --resize 720 --fps 30
 jzr video mov2mp4 clip                             # pair shorthand; extension optional
 jzr video mp42mp3 talk.mp4                         # the sound only
+jzr video convert clip.mp4 --to gif                # the GIF `jzr video gif` makes by default
 ```
 
 Options: `-t/--to`, `-f/--from`, `-c/--codec` (`h264`, `hevc`, `av1`,
@@ -275,6 +278,10 @@ targets), `-d/--dir`, `-p/--pattern`, `-r/--recursive`, `-o/--output`,
   goes into `.m4a` untouched, and `--bitrate` applies. The video options are
   refused with it, and a video with no audio track fails with
   `no audio track`.
+- `--to gif` (and pairs such as `mp42gif`) makes the same GIF as
+  `jzr video gif` with its defaults: the whole video, at most 480 pixels
+  wide and 15 frames a second. The other options are refused with it;
+  `jzr video gif` is the command with the GIF options.
 - Scanning a directory picks video files (`mp4 m4v mov mkv webm avi wmv flv
   mpg mpeg ts mts m2ts 3gp ogv`) that are not already in the target
   container.
@@ -469,6 +476,41 @@ Options: `--start TIME` (default 0), `--end TIME` or `--duration TIME`
   `_trim` results. An audio file given to `jzr video trim`, or a video given
   to `jzr audio trim`, fails on its own, as does any file ffmpeg cannot
   read; the rest are still cut and the exit code is 1.
+- `--dry-run`, the temporary `jzr-tmp-...` output and the progress line work
+  as in `jzr audio convert`.
+
+### GIFs
+
+`jzr video gif` makes an animated GIF of a video, or of a part of it, and
+writes it beside the source as `<name>.gif`:
+
+```bash
+jzr video gif clip.mp4                                   # the whole clip, 480 px wide, 15 fps
+jzr video gif clip.mp4 --start 1:05 --duration 4         # four seconds from 1:05
+jzr video gif clip.mov --end 3 --width 320 --fps 10 -o reaction.gif
+jzr video gif *.mp4 --outdir gifs
+```
+
+Options: `--start TIME` (default 0), `--end TIME` or `--duration TIME`
+(default: to the end of the file), `--width N` (default 480), `--fps N`
+(default 15), `-d/--dir`, `-p/--pattern`, `-r/--recursive`, `-o/--output`,
+`--outdir`, `--overwrite`, `--dry-run`. Times are written as for
+`jzr video trim`.
+
+- `--width` is the most the GIF may be wide; a narrower video keeps its size,
+  and the height follows the picture's shape. `--fps` likewise only lowers
+  the frame rate. A rotated phone video comes out upright.
+- The colours come from a palette made for the clip in the same ffmpeg run,
+  so no palette file is written. The GIF loops forever and has no sound.
+- GIFs grow fast. There is no length limit, but a GIF longer than 30 seconds
+  gets a note with the range of sizes to expect (`long GIF (0:45): expect a
+  few to tens of MB; ...`); a shorter part, a smaller `--width` or a lower
+  `--fps` makes it smaller.
+- The range works as in `jzr video trim`: contradicting times are usage
+  errors (exit code 2), a start past the end of a file fails that file, and
+  an end past it stops at the end. A file without a video track (an audio
+  file) fails on its own, as does any file ffmpeg cannot read; the rest are
+  still made and the exit code is 1.
 - `--dry-run`, the temporary `jzr-tmp-...` output and the progress line work
   as in `jzr audio convert`.
 

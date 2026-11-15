@@ -850,10 +850,13 @@ class CheckOptionsTests(unittest.TestCase):
         self.assertIsNone(self.check("mov", codec="hevc", quality="high"))
 
     def test_a_target_that_is_neither_audio_nor_video_is_refused(self) -> None:
-        for target in ("gif", "avi", "txt"):
+        for target in ("avi", "txt"):
             with self.subTest(target=target):
                 with self.assertRaises(ValueError):
                     self.check(target)
+
+    def test_gif_is_a_target_and_no_options_are_fine_with_it(self) -> None:
+        self.assertIsNone(self.check("gif"))
 
 
 if __name__ == "__main__":

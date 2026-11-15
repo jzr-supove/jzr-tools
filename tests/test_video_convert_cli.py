@@ -26,7 +26,7 @@ from test_media_cli import NOT_FOUND, describe, err, run_without_tools
 runner = CliRunner()
 
 MP4_FAMILY = "mov,mp4,m4a,3gp,3g2,mj2"
-TARGETS = "mp4, mov, mkv, webm, mp3, m4a, opus, ogg, flac, wav"
+TARGETS = "mp4, mov, mkv, webm, mp3, m4a, opus, ogg, flac, wav, gif"
 
 
 def video_probe(
@@ -111,9 +111,9 @@ class UsageErrorTests(FakeToolsCase):
         self.assertEqual(self.ffmpeg_calls(), [])
         self.assertEqual(self.ffprobe_calls(), [])
 
-    def test_gif_and_unknown_targets_are_refused_with_the_list_of_targets(self) -> None:
+    def test_unknown_targets_are_refused_with_the_list_of_targets(self) -> None:
         (clip,) = self.touch("clip.mp4")
-        for value in ("gif", "xyz", "aac"):
+        for value in ("xyz", "aac"):
             with self.subTest(value=value):
                 self.assert_usage_error(
                     self.invoke("convert", clip, "--to", value),
@@ -144,7 +144,7 @@ class UsageErrorTests(FakeToolsCase):
 
     def test_output_with_an_unknown_extension_and_no_target_is_refused(self) -> None:
         (clip,) = self.touch("clip.mp4")
-        for name in ("noext", "x.xyz", "x.gif"):
+        for name in ("noext", "x.xyz"):
             with self.subTest(name=name):
                 self.assert_usage_error(self.invoke("convert", clip, "-o", self.dir / name))
 
@@ -226,7 +226,8 @@ class UsageErrorTests(FakeToolsCase):
     def test_bad_options_are_usage_errors_even_when_ffmpeg_is_missing(self) -> None:
         (clip,) = self.touch("clip.mov")
         cases = [
-            ["--to", "gif"],
+            ["--to", "xyz"],
+            ["--to", "gif", "--fps", "10"],
             ["--to", "mp3", "--codec", "h264"],
             ["--to", "webm", "--codec", "h264"],
             ["--to", "mp4", "--crf", "60"],
@@ -533,14 +534,17 @@ class PairCommandTests(FakeToolsCase):
         self.assertFalse((self.dir / "o").exists())
 
     def test_the_documented_pairs_resolve(self) -> None:
-        for pair in ("mov2mp4", "mkv2webm", "mp42mp3", "avi2mkv", "webm2mp4", "m4v2mov", "MOV2MP4"):
+        for pair in (
+            "mov2mp4", "mkv2webm", "mp42mp3", "avi2mkv", "webm2mp4", "m4v2mov", "MOV2MP4",
+            "mp42gif", "mov2gif",
+        ):
             with self.subTest(pair=pair):
                 result = self.invoke(pair, "--help")
                 self.assertEqual(result.exit_code, 0, describe(result))
                 self.assertIn("Usage:", result.stdout)
 
     def test_names_that_are_not_pairs_are_no_such_command(self) -> None:
-        for pair in ("mp42gif", "wav2mp3", "mov2xyz", "foo2mp4", "mp42", "mov2gif"):
+        for pair in ("wav2mp3", "mov2xyz", "foo2mp4", "mp42", "gif2mp4"):
             with self.subTest(pair=pair):
                 result = self.invoke(pair, "--help")
                 self.assertEqual(result.exit_code, 2, describe(result))
