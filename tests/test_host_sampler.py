@@ -233,6 +233,37 @@ class StorageTests(SamplerCase):
 
         self.assertEqual([mount.mount for mount in storage], ["/", "/System/Volumes/Data"])
 
+    def test_macos_asset_volumes_are_left_out(self) -> None:
+        assets = "/System/Library/AssetsV2/com_apple_MobileAsset_Example/purpose_auto"
+        storage = self._storage(
+            [
+                Partition("/dev/disk3s1s1", "/", "apfs", "ro"),
+                Partition("/dev/disk5s1", f"{assets}/abc123.asset/AssetData", "apfs", "ro"),
+                Partition("/dev/disk6s1", f"{assets}/def456.asset/AssetData", "apfs", "ro"),
+                Partition("/dev/disk7s1", "/System/Library/AssetsV2", "apfs", "ro"),
+                Partition("/dev/disk3s5", "/System/Volumes/Data", "apfs", "rw"),
+            ],
+            lambda mount: Usage(1000, 250, 750, 25.0),
+        )
+
+        self.assertEqual([mount.mount for mount in storage], ["/", "/System/Volumes/Data"])
+
+    def test_mounts_that_only_resemble_the_asset_folder_are_kept(self) -> None:
+        storage = self._storage(
+            [
+                Partition("/dev/disk3s1s1", "/", "apfs", "ro"),
+                Partition("/dev/disk8s1", "/System/Library/AssetsV2x", "apfs", "rw"),
+                Partition("/dev/disk9s1", "/Volumes/AssetsV2", "apfs", "rw"),
+                Partition("/dev/disk10s1", "/System/Library/Other", "apfs", "rw"),
+            ],
+            lambda mount: Usage(1000, 250, 750, 25.0),
+        )
+
+        self.assertEqual(
+            sorted(mount.mount for mount in storage),
+            ["/", "/System/Library/AssetsV2x", "/System/Library/Other", "/Volumes/AssetsV2"],
+        )
+
     def test_a_failing_partition_listing_empties_only_storage(self) -> None:
         with patch("psutil.disk_partitions", side_effect=OSError("nope")):
             status = StatusSampler().sample(0)
@@ -279,13 +310,26 @@ class CpuAndSensorTests(SamplerCase):
 
     def test_missing_frequency_and_load_average_become_none(self) -> None:
         with (
-            patch("psutil.cpu_freq", side_effect=NotImplementedError),
+            patch("psutil.cpu_freq", side_effect=NotImplementedError, create=True),
             patch("os", spec=[]),
         ):
             cpu = StatusSampler().sample(0).cpu
 
         self.assertIsNone(cpu.frequency_mhz)
         self.assertIsNone(cpu.load_average)
+
+    def test_psutil_without_cpu_freq_reports_no_frequency(self) -> None:
+        import psutil
+
+        had_cpu_freq = hasattr(psutil, "cpu_freq")
+        with mock.patch.dict(psutil.__dict__):
+            psutil.__dict__.pop("cpu_freq", None)
+            self.assertFalse(hasattr(psutil, "cpu_freq"))
+            status = StatusSampler().sample(0)
+
+        self.assertEqual(hasattr(psutil, "cpu_freq"), had_cpu_freq)
+        self.assertIsNone(status.cpu.frequency_mhz)
+        self.assertEqual(status.cpu.usage_percent, 20.0)
 
     def test_cpu_model_is_looked_up_once(self) -> None:
         with patch("_cpu_model", return_value="Test CPU") as model:

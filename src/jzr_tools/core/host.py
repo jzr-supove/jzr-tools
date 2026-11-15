@@ -525,6 +525,9 @@ def _is_reported_mount(partition: object) -> bool:
     # macOS splits the system disk into helper volumes; only Data holds files.
     if mount.startswith("/System/Volumes/") and mount != "/System/Volumes/Data":
         return False
+    # macOS 26 also mounts downloaded system assets as volumes of their own.
+    if mount == "/System/Library/AssetsV2" or mount.startswith("/System/Library/AssetsV2/"):
+        return False
     return True
 
 
@@ -643,7 +646,9 @@ class StatusSampler:
             self._cpu_model = _attempt(_cpu_model, "Unknown CPU")
         # Windows has no load average; psutil's emulation needs a warm-up.
         load = os.getloadavg() if hasattr(os, "getloadavg") else None
-        frequency = _attempt(psutil.cpu_freq, None)
+        # psutil has no cpu_freq on some platforms (macOS on Apple Silicon).
+        read_frequency = getattr(psutil, "cpu_freq", None)
+        frequency = _attempt(read_frequency, None) if read_frequency else None
         return CpuInfo(
             model=self._cpu_model,
             physical_cores=psutil.cpu_count(logical=False),
