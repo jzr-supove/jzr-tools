@@ -106,9 +106,10 @@ def recorded_calls(tool_path: str) -> list[list[str]]:
 def ffmpeg_run(*args: str) -> None:
     """Run the real ffmpeg quietly; raises CalledProcessError on failure."""
     subprocess.run(
-        [shutil.which("ffmpeg") or "ffmpeg", "-v", "error", "-y", *args],
+        [shutil.which("ffmpeg") or "ffmpeg", "-nostdin", "-v", "error", "-y", *args],
         check=True,
         capture_output=True,
+        timeout=120,
     )
 
 

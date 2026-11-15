@@ -65,8 +65,15 @@ jobs:
       - name: Install the project
         run: uv sync --locked
 
+      # -v names each test in the log. If the suite runs past 20 minutes,
+      # faulthandler prints every thread's stack and exits, so a hang shows
+      # where it is instead of ending in a silent job timeout.
       - name: Run the tests
-        run: uv run --locked python -m unittest discover -s tests
+        shell: bash
+        run: >-
+          uv run --locked python -c "import faulthandler, unittest;
+          faulthandler.dump_traceback_later(1200, exit=True);
+          unittest.main(module=None, argv=['unittest', 'discover', '-s', 'tests', '-v'])"
 
   package:
     name: build and check the package
@@ -89,12 +96,16 @@ jobs:
         run: |
           sdist=$(ls dist/*.tar.gz)
           wheel=$(ls dist/*.whl)
+          # List each archive once: piping into grep -q under pipefail fails
+          # when grep stops reading before tar or unzip has finished writing.
+          sdist_files=$(tar -tzf "$sdist")
+          wheel_files=$(unzip -Z1 "$wheel")
           for name in LICENSE NOTICE; do
-            if ! tar -tzf "$sdist" | grep -q "^[^/]*/$name\$"; then
+            if ! grep -q "^[^/]*/$name\$" <<< "$sdist_files"; then
               echo "::error::$sdist does not contain $name"
               exit 1
             fi
-            if ! unzip -Z1 "$wheel" | grep -q "\.dist-info/licenses/$name\$"; then
+            if ! grep -q "\.dist-info/licenses/$name\$" <<< "$wheel_files"; then
               echo "::error::$wheel does not contain $name"
               exit 1
             fi

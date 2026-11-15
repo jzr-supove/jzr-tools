@@ -19,6 +19,7 @@ from jzr_tools.cli import app
 
 from media_fixtures import HAVE_FFMPEG, Clips, ffmpeg_run
 from test_media_cli import describe, err
+from test_video_convert_real import encoders
 
 runner = CliRunner()
 
@@ -199,6 +200,8 @@ class RealAudioConvertTests(unittest.TestCase):
         (mp3,) = self.stage("tagged.mp3")
         for target in ("ogg", "wav"):
             with self.subTest(target=target):
+                if target == "ogg" and "libvorbis" not in encoders():
+                    self.skipTest("ffmpeg lacks the encoder libvorbis")
                 result = self.ok(mp3, "--to", target)
                 self.assertFalse(has_picture(self.work / f"tagged.{target}"))
                 self.assertIn(f"cover art dropped: .{target} cannot hold it", result.stdout)

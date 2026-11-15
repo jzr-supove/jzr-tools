@@ -65,6 +65,8 @@ def make_shallow_directory(case: unittest.TestCase) -> Path:
     parent = Path(tempfile.gettempdir()).anchor if os.name == "nt" else "/tmp"
     shallow = Path(tempfile.mkdtemp(dir=parent)).resolve()
     case.addCleanup(shutil.rmtree, shallow, True)
+    if len(shallow.parts) >= 4:  # macOS: /tmp is a link to /private/tmp
+        case.skipTest(f"no directory fewer than four parts deep can be made here: {shallow}")
     return shallow
 
 
