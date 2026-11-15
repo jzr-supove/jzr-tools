@@ -4,27 +4,38 @@
 video and audio, trim and compress media, make GIFs, edit audio tags, free busy
 ports and clean up your machine. It runs on Windows, Linux and macOS.
 
-## Install from PyPI
+## Install
 
-`jzr-tools` needs Python 3.11 or newer. Install the `jzr` command with
-[pipx](https://pipx.pypa.io/):
+No Python needed. The installer sets up [uv](https://docs.astral.sh/uv/),
+which downloads a suitable Python by itself, and then installs the `jzr`
+command.
 
-```bash
-pipx install jzr-tools
-jzr --help
+Windows (PowerShell):
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/jzr-supove/jzr-tools/main/install.ps1 | iex"
 ```
 
-Or run it without installing, with [uv](https://docs.astral.sh/uv/):
+macOS and Linux:
 
 ```bash
-uvx --from jzr-tools jzr --help
+curl -LsSf https://raw.githubusercontent.com/jzr-supove/jzr-tools/main/install.sh | sh
 ```
+
+Open a new terminal afterwards and run `jzr --help`. Run the same line again
+to upgrade.
+
+If you already have uv or pipx:
+
+```bash
+uv tool install jzr-tools      # upgrade: uv tool upgrade jzr-tools
+pipx install jzr-tools         # needs Python 3.11 or newer; upgrade: pipx upgrade jzr-tools
+```
+
+To try it without installing anything: `uvx --from jzr-tools jzr --help`.
 
 The video and audio commands use ffmpeg. If it is not on your `PATH`, run
 `jzr ffmpeg install` once to download it into jzr's own folder.
-
-To upgrade later, run `pipx upgrade jzr-tools`; `uvx` picks up new releases
-with `uvx --from jzr-tools@latest jzr`.
 
 ## Install from source
 

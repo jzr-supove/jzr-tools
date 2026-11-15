@@ -73,6 +73,8 @@ include = [
   "/LICENSE",
   "/NOTICE",
   "/pyproject.toml",
+  "/install.ps1",
+  "/install.sh",
 ]
 
 [tool.uv]
