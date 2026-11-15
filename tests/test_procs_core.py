@@ -364,18 +364,52 @@ class FakeProcess:
         }
 
 
+class MacMemoryTests(ProcsTestCase):
+    """On macOS the resident size is used and the slow full memory scan is never made."""
+
+    def test_macos_never_asks_for_full_memory_info(self) -> None:
+        fake = FakeProcess(700, rss=90 * MIB, uss=40 * MIB, pss=25 * MIB, swap=9 * MIB)
+
+        with mock.patch.object(self.procs.sys, "platform", "darwin"), \
+             mock.patch.object(self.procs, "_swap_share", return_value=3 * MIB), \
+             mock.patch.object(fake, "memory_full_info") as full_info:
+            result = self.procs._memory(fake)
+
+        full_info.assert_not_called()
+        self.assertEqual(result, (90 * MIB, 0))
+
+    def test_macos_uses_the_resident_size_even_when_full_info_would_hang(self) -> None:
+        fake = FakeProcess(700, rss=64 * MIB)
+
+        with mock.patch.object(self.procs.sys, "platform", "darwin"), \
+             mock.patch.object(fake, "memory_full_info", side_effect=AssertionError("hangs")):
+            self.assertEqual(self.procs._memory(fake), (64 * MIB, 0))
+
+    def test_linux_still_prefers_pss_from_full_info_with_its_swap(self) -> None:
+        fake = FakeProcess(700, rss=90 * MIB, uss=40 * MIB, pss=25 * MIB, swap=9 * MIB)
+
+        with mock.patch.object(self.procs.sys, "platform", "linux"), \
+             mock.patch.object(self.procs, "_swap_share", return_value=None):
+            self.assertEqual(self.procs._memory(fake), (25 * MIB, 9 * MIB))
+
+
 @unittest.skipUnless(POSIX, "uses POSIX user and process semantics")
 class SnapshotTests(ProcsTestCase):
     """Relies on ``psutil.process_iter(attrs)`` + ``.info``; the current
     process is ``psutil.Process()`` with ``.parents()`` and ``.username()``, and
     root is ``procs._is_root()``. ``procs._swap_share(pid)`` is patched (``None``
-    by default) so real /proc data of look-alike PIDs never leaks in."""
+    by default) so real /proc data of look-alike PIDs never leaks in. The
+    platform is Linux unless a test says otherwise, because macOS reads only
+    the resident size."""
 
     def setUp(self) -> None:
         super().setUp()
         patcher = mock.patch.object(self.procs, "_swap_share", return_value=None, create=True)
         self.swap_share = patcher.start()
         self.addCleanup(patcher.stop)
+        platform = mock.patch.object(self.procs.sys, "platform", "linux")
+        platform.start()
+        self.addCleanup(platform.stop)
 
     def run_snapshot(self, fakes, *, root: bool = False):
         table = {f.pid: f for f in fakes}
@@ -455,6 +489,16 @@ class SnapshotTests(ProcsTestCase):
         fake = FakeProcess(700, rss=77 * MIB)
 
         self.assertEqual(self.run_snapshot(self.base_fakes(fake))[700].memory_bytes, 77 * MIB)
+
+    def test_a_macos_snapshot_reports_the_resident_size_with_no_swap(self) -> None:
+        fake = FakeProcess(700, rss=90 * MIB, uss=40 * MIB, pss=25 * MIB, swap=9 * MIB)
+        self.swap_share.return_value = 3 * MIB
+
+        with mock.patch.object(self.procs.sys, "platform", "darwin"):
+            proc = self.run_snapshot(self.base_fakes(fake))[700]
+
+        self.assertEqual(proc.memory_bytes, 90 * MIB)
+        self.assertEqual(proc.swap_bytes, 0)
 
     def test_swap_is_zero_when_the_system_does_not_report_it(self) -> None:
         fake = FakeProcess(700, pss=10 * MIB)

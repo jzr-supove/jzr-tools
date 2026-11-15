@@ -169,6 +169,10 @@ def _swap_share(pid: int) -> int | None:
 
 def _memory(process: psutil.Process) -> tuple[int, int]:
     """Return a process's memory and swap, as precisely as the system allows."""
+    if sys.platform == "darwin":
+        # memory_full_info walks every memory region on macOS and can hang
+        # for minutes, so only the resident size is read there.
+        return process.memory_info().rss, 0
     try:
         full = process.memory_full_info()
     except psutil.AccessDenied:
