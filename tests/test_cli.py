@@ -102,10 +102,10 @@ class CliTests(unittest.TestCase):
         result = runner.invoke(app, ["text", "kebab", "ApiSix deployment Notes"])
 
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.stdout.strip(), "apisix-deployment-notes")
+        self.assertEqual(result.stdout.strip(), "api-six-deployment-notes")
         self.assertEqual(
             kebab_case("ApiSix deployment Notes"),
-            "apisix-deployment-notes",
+            "api-six-deployment-notes",
         )
 
     def test_kebab_command_can_prefix_iso_date(self) -> None:
@@ -118,7 +118,7 @@ class CliTests(unittest.TestCase):
             )
 
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.stdout.strip(), "2026-07-11_apisix-deployment-notes")
+        self.assertEqual(result.stdout.strip(), "2026-07-11_api-six-deployment-notes")
 
     def test_kebab_command_reads_multiline_stdin_when_text_is_omitted(self) -> None:
         text = "ApiSix deployment\n\nNotes"
@@ -126,8 +126,8 @@ class CliTests(unittest.TestCase):
         result = runner.invoke(app, ["text", "kebab"], input=text)
 
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.stdout.strip(), "apisix-deployment-notes")
-        self.assertEqual(kebab_case(text), "apisix-deployment-notes")
+        self.assertEqual(result.stdout.strip(), "api-six-deployment-notes")
+        self.assertEqual(kebab_case(text), "api-six-deployment-notes")
 
     def test_kebab_command_can_copy_result_to_clipboard(self) -> None:
         with mock.patch("jzr_tools.commands.text.copy_to_clipboard") as copy_mock:
@@ -137,8 +137,8 @@ class CliTests(unittest.TestCase):
             )
 
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.stdout.strip(), "apisix-deployment-notes")
-        copy_mock.assert_called_once_with("apisix-deployment-notes")
+        self.assertEqual(result.stdout.strip(), "api-six-deployment-notes")
+        copy_mock.assert_called_once_with("api-six-deployment-notes")
 
     def test_module_entrypoint_runs(self) -> None:
         env = os.environ.copy()

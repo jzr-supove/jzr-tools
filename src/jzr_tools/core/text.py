@@ -37,9 +37,44 @@ def _transliterate(text: str) -> str:
     return "".join(converted)
 
 
+def _split_camel_case(text: str) -> str:
+    """Put a space between the words of camelCase and PascalCase runs.
+
+    ``myVarName`` becomes ``my Var Name`` and ``HTTPServer`` ``HTTP Server``.
+    A digit stays with the word before it (``version2Beta`` is
+    ``version2 Beta``); a run of capitals stays whole. Done before
+    transliteration, so an all-caps Cyrillic word is not cut apart by the
+    mixed-case ASCII spelling it turns into.
+    """
+    characters = []
+    for index, character in enumerate(text):
+        if index and character.isupper():
+            before = text[index - 1]
+            after = text[index + 1] if index + 1 < len(text) else ""
+            if (
+                before.islower()
+                or (before.isupper() and after.islower())
+                or (before.isdigit() and _digits_follow_a_letter(text, index - 1))
+            ):
+                characters.append(" ")
+        characters.append(character)
+    return "".join(characters)
+
+
+def _digits_follow_a_letter(text: str, index: int) -> bool:
+    """Whether the run of digits ending at ``index`` comes right after a letter."""
+    while index >= 0 and text[index].isdigit():
+        index -= 1
+    return index >= 0 and text[index].isalpha()
+
+
 def slugify(text: str, *, separator: str = "-", lowercase: bool = True) -> str:
-    """Convert text into a normalized ASCII slug."""
-    normalized = unicodedata.normalize("NFKD", _transliterate(text))
+    """Convert text into a normalized ASCII slug.
+
+    Words of camelCase and PascalCase are separated too.
+    """
+    split = _split_camel_case(unicodedata.normalize("NFC", text))
+    normalized = unicodedata.normalize("NFKD", _transliterate(split))
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
     # Joining the alphanumeric runs keeps the separator literal: it is never
     # read as a regex template and never trimmed out of the content.

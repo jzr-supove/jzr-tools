@@ -6,40 +6,12 @@ import sys
 import click
 
 from jzr_tools.core.system import copy_to_clipboard
-from jzr_tools.core.text import kebab_case, slugify
+from jzr_tools.core.text import slugify
 
 
 @click.group()
 def app() -> None:
     """Text utilities."""
-
-
-def _fail_empty() -> None:
-    click.echo("Nothing to convert: the text has no letters or digits.", err=True)
-    raise click.exceptions.Exit(1)
-
-
-@app.command()
-@click.argument("text")
-@click.option(
-    "--separator",
-    "-s",
-    default="-",
-    show_default=True,
-    help="Separator to use in the slug.",
-)
-@click.option(
-    "--preserve-case",
-    is_flag=True,
-    help="Keep the original letter casing instead of lowercasing.",
-)
-def slug(text: str, separator: str, preserve_case: bool) -> None:
-    """Convert text into a URL-safe slug."""
-    result = slugify(text, separator=separator, lowercase=not preserve_case)
-    if not result:
-        _fail_empty()
-
-    click.echo(result)
 
 
 def _read_text(text: str | None) -> str:
@@ -58,6 +30,18 @@ def _read_text(text: str | None) -> str:
 @app.command()
 @click.argument("text", required=False)
 @click.option(
+    "--separator",
+    "-s",
+    default="-",
+    show_default=True,
+    help="Separator to put between words.",
+)
+@click.option(
+    "--preserve-case",
+    is_flag=True,
+    help="Keep the original letter casing instead of lowercasing.",
+)
+@click.option(
     "--date",
     "--include-date",
     "include_date",
@@ -70,18 +54,22 @@ def _read_text(text: str | None) -> str:
     is_flag=True,
     help="Copy the result to the system clipboard.",
 )
-def kebab(text: str | None, include_date: bool, copy: bool) -> None:
-    """Convert text into lowercase kebab-case.
+def slug(
+    text: str | None, separator: str, preserve_case: bool, include_date: bool, copy: bool
+) -> None:
+    """Convert text into a URL-safe slug, lowercase kebab-case by default.
 
+    camelCase and PascalCase words are split (myVarName becomes my-var-name).
     Omit TEXT to read pasted or piped stdin.
     """
-    source_text = _read_text(text)
-    if not kebab_case(source_text):
+    result = slugify(_read_text(text), separator=separator, lowercase=not preserve_case)
+    if not result:
         # Checked before the date is added, so the output is never a bare prefix.
-        _fail_empty()
+        click.echo("Nothing to convert: the text has no letters or digits.", err=True)
+        raise click.exceptions.Exit(1)
 
-    date_prefix = date.today() if include_date else None
-    result = kebab_case(source_text, date_prefix=date_prefix)
+    if include_date:
+        result = f"{date.today().isoformat()}_{result}"
 
     if copy:
         try:
@@ -91,3 +79,13 @@ def kebab(text: str | None, include_date: bool, copy: bool) -> None:
             raise click.exceptions.Exit(1) from exc
 
     click.echo(result)
+
+
+# The old name of the same command, kept working but not listed.
+app.add_command(click.Command(
+    "kebab",
+    callback=slug.callback,
+    params=slug.params,
+    help=slug.help,
+    hidden=True,
+))

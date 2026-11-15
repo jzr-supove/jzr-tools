@@ -84,8 +84,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr ffmpeg install` | Download ffmpeg and ffprobe into jzr's own folder |
 | `jzr ffmpeg status` | Show which ffmpeg and ffprobe jzr uses and where they come from |
 | `jzr ffmpeg remove` | Delete the ffmpeg that `jzr ffmpeg install` downloaded |
-| `jzr text slug` | Turn text into a URL-safe slug |
-| `jzr text kebab` | Turn text into lowercase kebab-case, optionally dated and copied |
+| `jzr text slug` | Turn text into a URL-safe kebab-case slug, optionally dated and copied |
 | `jzr port show` | List listening ports and their processes, or show what uses given ports |
 | `jzr port kill` | Force-kill the processes using one or more local ports |
 | `jzr killport` | Shortcut for `jzr port kill` |
@@ -911,32 +910,26 @@ Tried on Linux and Windows 11.
 
 ## Text
 
-Convert text into lowercase kebab-case:
+Turn text into a lowercase kebab-case slug:
 
 ```bash
-jzr text kebab "ApiSix deployment Notes"
-```
-
-Prefix the result with today's ISO date:
-
-```bash
-jzr text kebab "ApiSix deployment Notes" --date
-```
-
-Copy the result to the system clipboard:
-
-```bash
-jzr text kebab "ApiSix deployment Notes" -c
+jzr text slug "ApiSix deployment Notes"         # api-six-deployment-notes
+jzr text slug "ApiSix deployment Notes" --date  # 2026-11-15_api-six-deployment-notes
+jzr text slug "ApiSix deployment Notes" -c      # ...and copy it to the clipboard
+jzr text slug "myVarName" -s _                  # my_var_name
+jzr text slug "Read Me" --preserve-case         # Read-Me
 ```
 
 Omit the text argument to paste or pipe multiline content. Runs of spaces,
-newlines, and punctuation collapse into a single dash.
+newlines, and punctuation collapse into one separator, and camelCase or
+PascalCase words are split (`HTTPServer` becomes `http-server`). The date
+prefix is always followed by `_`. `jzr text kebab` is the same command under
+its old name.
 
-`text slug` and `text kebab` produce ASCII. Accented Latin letters lose their
-accents, Russian and Uzbek Cyrillic are transliterated (`Привет мир` becomes
-`privet-mir`), and letters such as `ß` and `ø` are spelled out. Other scripts
-are dropped; if nothing is left, the command exits `1` instead of printing an
-empty result.
+The result is ASCII. Accented Latin letters lose their accents, Russian and
+Uzbek Cyrillic are transliterated (`Привет мир` becomes `privet-mir`), and
+letters such as `ß` and `ø` are spelled out. Other scripts are dropped; if
+nothing is left, the command exits `1` instead of printing an empty result.
 
 ## Contributing
 
