@@ -94,6 +94,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr bind add` | Save a long command under a short name, run as `jzr <name>` |
 | `jzr bind list` | List your shortcuts |
 | `jzr bind remove` | Remove shortcuts |
+| `jzr completion` | Print the tab-completion script for bash, zsh, fish or PowerShell |
 | `jzr version` | Print the installed toolkit version |
 
 ## Image Conversion
@@ -930,6 +931,26 @@ The result is ASCII. Accented Latin letters lose their accents, Russian and
 Uzbek Cyrillic are transliterated (`Привет мир` becomes `privet-mir`), and
 letters such as `ß` and `ø` are spelled out. Other scripts are dropped; if
 nothing is left, the command exits `1` instead of printing an empty result.
+
+## Shell completion
+
+`jzr completion SHELL` prints a script that makes Tab complete commands,
+options and choices. Load it from your shell's start-up file:
+
+```bash
+echo 'eval "$(jzr completion bash)"' >> ~/.bashrc
+echo 'eval "$(jzr completion zsh)"' >> ~/.zshrc
+jzr completion fish > ~/.config/fish/completions/jzr.fish
+```
+
+```powershell
+Add-Content $PROFILE 'jzr completion powershell | Out-String | Invoke-Expression'
+```
+
+Open a new shell afterwards. File arguments fall back to the shell's own path
+completion. Your `jzr bind` shortcuts are not completed. Windows PowerShell 5.1
+does not offer completions for a bare `-` or `--`; type the first letter of
+the option.
 
 ## Contributing
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import importlib
+import os
 import sys
 
 import click
@@ -27,6 +28,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "port": ("jzr_tools.commands.network:app", "Inspect and free local ports."),
     "host": ("jzr_tools.commands.host:app", "Inspect and clean up this machine."),
     "bind": ("jzr_tools.commands.bind:app", "Save your own shortcuts for long commands."),
+    "completion": ("jzr_tools.commands.completion:app", "Print a shell completion script."),
     # The one shortcut: the same command as `jzr port kill`.
     "killport": (
         "jzr_tools.commands.network:killport",
@@ -87,6 +89,22 @@ class LazyGroup(click.Group):
         if rows:
             with formatter.section("Commands"):
                 formatter.write_dl(rows)
+
+    def shell_complete(self, ctx: click.Context, incomplete: str) -> list:
+        # The default implementation loads every command to read its help.
+        from click.shell_completion import CompletionItem
+
+        items = []
+        for name in self.list_commands(ctx):
+            if not name.startswith(incomplete):
+                continue
+            if name in self.lazy_commands:
+                items.append(CompletionItem(name, help=self.lazy_commands[name][1]))
+            elif not self.commands[name].hidden:
+                items.append(CompletionItem(name, help=self.commands[name].get_short_help_str()))
+        # Options of the group itself, skipping Group's own command listing.
+        items.extend(click.Command.shell_complete(self, ctx, incomplete))
+        return items
 
 
 @click.group(
@@ -157,7 +175,25 @@ def _utf8_output() -> None:
             reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
+# Shell completion calls jzr with this variable set; see `jzr completion`.
+COMPLETE_VAR = "_JZR_COMPLETE"
+
+
 def main() -> None:
     """Console script entrypoint."""
     _utf8_output()
-    app(windows_expand_args=should_expand_windows_args(sys.argv[1:]))
+    completing = os.environ.get(COMPLETE_VAR, "")
+    if completing:
+        # Shells split the reply on "\n"; a Windows pipe would get "\r\n".
+        reconfigure = getattr(sys.stdout, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(newline="\n")
+    if completing.startswith("powershell"):
+        # Click has no PowerShell support of its own; importing this adds it.
+        import jzr_tools.commands.completion  # noqa: F401
+    app(
+        # Fixed, so a `jzr.exe` launcher does not change the name or variable.
+        prog_name="jzr",
+        complete_var=COMPLETE_VAR,
+        windows_expand_args=should_expand_windows_args(sys.argv[1:]),
+    )

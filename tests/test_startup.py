@@ -19,7 +19,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = PROJECT_ROOT / "src"
 
-LAZY_NAMES = {"image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg"}
+LAZY_NAMES = {
+    "image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg", "completion",
+}
 BOX_CHARS = ("╭", "│", "╰", "─")
 
 _RUNNER = """
@@ -384,6 +386,7 @@ class RegistryTests(unittest.TestCase):
                 "bind": "jzr_tools.commands.bind:app",
                 "video": "jzr_tools.commands.video:app",
                 "audio": "jzr_tools.commands.audio:app",
+                "completion": "jzr_tools.commands.completion:app",
             },
         )
 
@@ -742,11 +745,41 @@ class BindStartupTests(_ObservedTestCase):
 
 class PlainErrorOutputTests(_ObservedTestCase):
     def test_usage_error_is_plain_text_with_exit_code_2(self) -> None:
-        obs = self.run_cli("text", "slug")
+        obs = self.run_cli("text", "slug", "--bogus")
         self.assertEqual(obs.exit_code, "2", obs.describe())
         self.assertIn("Error:", obs.stderr)
         for ch in BOX_CHARS:
             self.assertNotIn(ch, obs.stderr)
+
+
+class CompletionStartupTests(_ObservedTestCase):
+    def test_root_help_lists_completion_with_its_help(self) -> None:
+        obs = self.run_cli("--help")
+        self.assert_ok(obs)
+        self.assertRegex(obs.stdout, r"(?m)^  completion\s+Print a shell completion script\.")
+
+    def test_completion_help_exits_zero_and_loads_no_heavy_module(self) -> None:
+        obs = self.run_cli("completion", "--help")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        self.assert_not_loaded(obs, HEAVY_MODULES)
+        self.assert_no_prefix_loaded(
+            obs,
+            [
+                "jzr_tools.commands.image",
+                "jzr_tools.commands.network",
+                "jzr_tools.commands.host",
+                "jzr_tools.commands.video",
+                "jzr_tools.commands.audio",
+            ],
+        )
+
+    def test_other_calls_never_load_the_completion_module(self) -> None:
+        for args in (["--help"], ["version"], ["text", "slug", "Hello World"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, ["jzr_tools.commands.completion"])
 
 
 if __name__ == "__main__":
