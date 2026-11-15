@@ -86,8 +86,8 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr ffmpeg remove` | Delete the ffmpeg that `jzr ffmpeg install` downloaded |
 | `jzr text slug` | Turn text into a URL-safe slug |
 | `jzr text kebab` | Turn text into lowercase kebab-case, optionally dated and copied |
-| `jzr port show` | Show which processes are using a local port |
-| `jzr port kill` | Force-kill the processes using a local port |
+| `jzr port show` | List listening ports and their processes, or show what uses given ports |
+| `jzr port kill` | Force-kill the processes using one or more local ports |
 | `jzr killport` | Shortcut for `jzr port kill` |
 | `jzr host status` | Show host, CPU, memory, storage and GPU status |
 | `jzr host clean` | Find caches and other disposable data, and remove what you pick |
@@ -542,13 +542,28 @@ Options: `--start TIME` (default 0), `--end TIME` or `--duration TIME`
 See what is using a port, then free it:
 
 ```bash
-jzr port show 3000
+jzr port show              # every listening TCP port and its process
+jzr port show --udp        # ...and bound UDP ports too
+jzr port show 3000 8080    # every socket on these ports
+jzr port show --json       # for scripts
 jzr port kill 3000
-jzr killport 3000      # shortcut for `jzr port kill`
+jzr killport 3000 8080     # shortcut for `jzr port kill`, several ports at once
 ```
 
-`jzr port show` lists each process with its PID, name, protocol and local
-address, and changes nothing.
+Without a port, `jzr port show` prints a table sorted by port. A process that
+listens on the same port over IPv4 and IPv6 gets one row:
+
+```text
+PORT  PROTO  PID    NAME         ADDRESS
+135   TCP    1700   svchost.exe  0.0.0.0, [::]
+445   TCP    4      System       0.0.0.0, [::]
+3000  TCP    18472  node.exe     127.0.0.1
+```
+
+With ports, it prints one line per socket with the PID, name, protocol, local
+address and state. `--json` prints one array of sockets in both cases, each
+with `port`, `protocol`, `address`, `pid` (`null` when unknown), `name` and
+`status` (`null` for UDP). `port show` changes nothing.
 
 `jzr port kill` force-kills all visible processes bound to the exact local port, for TCP and UDP
 over IPv4 and IPv6. Works on Windows, Linux, and macOS using `psutil`, installed
@@ -556,8 +571,10 @@ with the toolkit. On Unix this sends SIGKILL; on Windows it uses TerminateProces
 Remote connections to the port are not targeted, and unrelated child processes
 are not killed. There is no confirmation prompt.
 
-Ports must be between 1 and 65535. The command prints each killed PID and returns
-success if no process or Windows port exclusion is found. Permission errors or processes that do not exit
+Ports must be between 1 and 65535. Give several ports to free them in one call;
+a process holding more than one of them is killed once and reported for each.
+The command prints each killed PID and returns success if no process or Windows
+port exclusion is found; a failure on one port does not stop the others. Permission errors or processes that do not exit
 produce a nonzero exit code, while other matching processes are still attempted.
 Processes that restart automatically may reclaim the port.
 
@@ -584,7 +601,7 @@ jzr killport 3000 --restart-hns
 The flag stops and starts the Host Network Service only when an exclusion is
 detected. This can interrupt Docker, containers, and WSL networking. The command
 rechecks all exclusion ranges and tests local binds afterward; it fails if the
-port is still unavailable. A restart is not guaranteed to clear a reservation,
+port is still unavailable. With several excluded ports, HNS is restarted once. A restart is not guaranteed to clear a reservation,
 and Windows may reserve the port again later. Administered exclusions (`*`) are
 reported without restarting HNS. The command does not delete reservations or
 change dynamic port ranges. Linux and macOS reject `--restart-hns`.

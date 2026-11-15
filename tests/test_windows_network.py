@@ -146,8 +146,10 @@ class NativeCommandTests(unittest.TestCase):
 
 class WindowsKillPortCliTests(unittest.TestCase):
     def setUp(self) -> None:
+        self.result = KillPortResult()
         self.kill = self.enterContext(mock.patch(
-            "jzr_tools.commands.network.kill_port", return_value=KillPortResult(),
+            "jzr_tools.commands.network.kill_ports",
+            side_effect=lambda ports: {port: self.result for port in ports},
         ))
         self.windows = self.enterContext(mock.patch("jzr_tools.commands.network.is_windows", return_value=True))
         self.exclusions = self.enterContext(mock.patch(
@@ -170,7 +172,7 @@ class WindowsKillPortCliTests(unittest.TestCase):
         self.restart.assert_not_called()
 
     def test_exclusions_checked_even_when_process_was_killed(self) -> None:
-        self.kill.return_value = KillPortResult(killed=[101])
+        self.result = KillPortResult(killed=[101])
         result = self.invoke()
         self.assertEqual(result.exit_code, 1)
         self.assertIn("Killed PID 101", result.stdout)

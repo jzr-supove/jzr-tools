@@ -1,5 +1,6 @@
 """Cross-platform helpers for processes bound to network ports."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 import os
 import socket
@@ -51,6 +52,17 @@ def _process_name(pid: int | None) -> str:
         return "?"
 
 
+def _owner(connection, port: int) -> PortOwner:
+    return PortOwner(
+        pid=connection.pid,
+        name=_process_name(connection.pid),
+        protocol="udp" if connection.type == socket.SOCK_DGRAM else "tcp",
+        address=connection.laddr.ip,
+        port=port,
+        status=connection.status,
+    )
+
+
 def list_port_owners(port: int) -> list[PortOwner]:
     """Return the sockets bound to a local TCP/UDP port, without touching them."""
     _check_port(port)
@@ -62,56 +74,82 @@ def list_port_owners(port: int) -> list[PortOwner]:
         # TIME_WAIT sockets can outlive their process; kill_port skips them too.
         if connection.status == psutil.CONN_TIME_WAIT:
             continue
-        owners.add(
-            PortOwner(
-                pid=connection.pid,
-                name=_process_name(connection.pid),
-                protocol="udp" if connection.type == socket.SOCK_DGRAM else "tcp",
-                address=connection.laddr.ip,
-                port=port,
-                status=connection.status,
-            )
-        )
+        owners.add(_owner(connection, port))
 
     return sorted(owners, key=lambda owner: (owner.pid or -1, owner.protocol, owner.address))
 
 
-def kill_port(port: int) -> KillPortResult:
-    """Force-kill owners of a local TCP/UDP port and wait for their exit.
+def list_listening(*, udp: bool = False) -> list[PortOwner]:
+    """Return every listening TCP socket, and bound UDP sockets if asked.
 
-    Only processes that still own the port at the pre-kill check are targeted.
-    Process.kill guards against PID reuse after creating the Process object.
+    Sorted by port, protocol, PID and address. Nothing is touched.
     """
-    _check_port(port)
+    owners: set[PortOwner] = set()
+    for connection in _inet_connections():
+        if not connection.laddr:
+            continue
+        if connection.type == socket.SOCK_DGRAM:
+            if not udp:
+                continue
+        elif connection.status != psutil.CONN_LISTEN:
+            continue
+        owners.add(_owner(connection, connection.laddr.port))
+
+    return sorted(
+        owners,
+        key=lambda owner: (owner.port, owner.protocol, owner.pid or -1, owner.address),
+    )
+
+
+def kill_port(port: int) -> KillPortResult:
+    """Force-kill owners of a local TCP/UDP port and wait for their exit."""
+    return kill_ports([port])[port]
+
+
+def kill_ports(ports: Sequence[int]) -> dict[int, KillPortResult]:
+    """Force-kill owners of local TCP/UDP ports and wait for their exit.
+
+    One snapshot of the sockets serves every port. A process holding several
+    of the ports is killed once and reported for each of them. Only processes
+    that still own one of the ports at the pre-kill check are targeted.
+    Process.kill guards against PID reuse after creating the Process object.
+    The result has one entry per distinct port, in the order given.
+    """
+    wanted = list(dict.fromkeys(ports))
+    for port in wanted:
+        _check_port(port)
     connections = _inet_connections()
 
-    result = KillPortResult()
-    pids: set[int] = set()
-    unknown_owner = False
+    results = {port: KillPortResult() for port in wanted}
+    held: dict[int, set[int]] = {}  # pid -> listed ports it holds
     for connection in connections:
-        if not connection.laddr or connection.laddr.port != port:
+        if not connection.laddr or connection.laddr.port not in results:
             continue
         # TIME_WAIT sockets can outlive their process and cannot be killed.
         if connection.status == psutil.CONN_TIME_WAIT:
             continue
+        port = connection.laddr.port
         if connection.pid is None:
-            unknown_owner = True
+            message = f"Cannot identify an owner of port {port}. {PERMISSION_HINT}"
+            if message not in results[port].errors:
+                results[port].errors.append(message)
         else:
-            pids.add(connection.pid)
+            held.setdefault(connection.pid, set()).add(port)
 
-    if unknown_owner:
-        result.errors.append(f"Cannot identify an owner of port {port}. {PERMISSION_HINT}")
+    def fail(pid: int, message: str) -> None:
+        for port in held[pid]:
+            results[port].errors.append(message)
 
     pending: list[psutil.Process] = []
-    for pid in sorted(pids):
+    for pid in sorted(held):
         if pid <= 0 or pid == os.getpid():
-            result.errors.append(f"Refusing to kill reserved or current PID {pid}.")
+            fail(pid, f"Refusing to kill reserved or current PID {pid}.")
             continue
         try:
             process = psutil.Process(pid)
             # The initial snapshot can become stale before we reach this PID.
             if not any(
-                connection.laddr and connection.laddr.port == port
+                connection.laddr and connection.laddr.port in held[pid]
                 for connection in process.net_connections(kind="inet")
             ):
                 continue
@@ -120,23 +158,27 @@ def kill_port(port: int) -> KillPortResult:
         except psutil.NoSuchProcess:
             continue
         except (psutil.AccessDenied, PermissionError):
-            result.errors.append(f"Access denied for PID {pid}. {PERMISSION_HINT}")
+            fail(pid, f"Access denied for PID {pid}. {PERMISSION_HINT}")
         except OSError as exc:
-            result.errors.append(f"Could not kill PID {pid}: {exc}")
+            fail(pid, f"Could not kill PID {pid}: {exc}")
 
+    killed: list[int] = []
     gone, alive = psutil.wait_procs(pending, timeout=3)
-    result.killed = [process.pid for process in gone]
+    killed.extend(process.pid for process in gone)
     for process in alive:
         try:
             # Unix retains a dead process as a zombie until its parent reaps it.
             # Its sockets are already closed, even though wait_procs sees the PID.
             if process.status() == psutil.STATUS_ZOMBIE:
-                result.killed.append(process.pid)
+                killed.append(process.pid)
             else:
-                result.errors.append(f"PID {process.pid} has not exited after the kill request.")
+                fail(process.pid, f"PID {process.pid} has not exited after the kill request.")
         except psutil.NoSuchProcess:
-            result.killed.append(process.pid)
+            killed.append(process.pid)
         except (psutil.AccessDenied, OSError):
-            result.errors.append(f"Cannot confirm exit of PID {process.pid}. {PERMISSION_HINT}")
-    result.killed.sort()
-    return result
+            fail(process.pid, f"Cannot confirm exit of PID {process.pid}. {PERMISSION_HINT}")
+
+    for pid in sorted(killed):
+        for port in held[pid]:
+            results[port].killed.append(pid)
+    return results
