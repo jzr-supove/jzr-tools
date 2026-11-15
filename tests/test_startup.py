@@ -756,7 +756,7 @@ class CompletionStartupTests(_ObservedTestCase):
     def test_root_help_lists_completion_with_its_help(self) -> None:
         obs = self.run_cli("--help")
         self.assert_ok(obs)
-        self.assertRegex(obs.stdout, r"(?m)^  completion\s+Print a shell completion script\.")
+        self.assertRegex(obs.stdout, r"(?m)^  completion\s+Set up shell completion, or print its script\.")
 
     def test_completion_help_exits_zero_and_loads_no_heavy_module(self) -> None:
         obs = self.run_cli("completion", "--help")
@@ -773,6 +773,36 @@ class CompletionStartupTests(_ObservedTestCase):
                 "jzr_tools.commands.audio",
             ],
         )
+
+    def test_install_and_remove_help_exit_zero_without_psutil_or_other_heavy_code(self) -> None:
+        for args in (
+            ["completion", "-h"],
+            ["completion", "install", "--help"],
+            ["completion", "install", "-h"],
+            ["completion", "setup", "-h"],
+            ["completion", "remove", "-h"],
+        ):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
+                self.assert_not_loaded(obs, HEAVY_MODULES)
+                if args[1] != "-h" and args[1] != "--help":
+                    self.assertIn("--dry-run", obs.stdout)
+
+    def test_install_help_describes_the_shell_argument_and_dry_run(self) -> None:
+        obs = self.run_cli("completion", "install", "-h")
+        self.assert_ok(obs)
+        self.assertIn("SHELL", obs.stdout)
+        self.assertIn("--dry-run", obs.stdout)
+
+    def test_completion_help_lists_install_and_remove_but_not_setup(self) -> None:
+        obs = self.run_cli("completion", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("install", listed)
+        self.assertIn("remove", listed)
+        self.assertNotIn("setup", listed)
 
     def test_other_calls_never_load_the_completion_module(self) -> None:
         for args in (["--help"], ["version"], ["text", "slug", "Hello World"]):

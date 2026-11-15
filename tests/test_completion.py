@@ -116,25 +116,53 @@ class CompletionScriptTests(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("tcsh", result.stderr)
 
-    def test_missing_shell_is_a_usage_error(self) -> None:
+    def test_printed_scripts_are_exactly_what_click_generates_with_unix_line_endings(self) -> None:
+        from click.shell_completion import get_completion_class
+
+        for shell in SHELLS:
+            with self.subTest(shell=shell):
+                completer = get_completion_class(shell)(app, {}, "jzr", "_JZR_COMPLETE")
+                expected = (completer.source_template % completer.source_vars()).encode("utf-8")
+
+                result = runner.invoke(app, ["completion", shell])
+
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertEqual(result.stdout_bytes, expected)
+                self.assertNotIn(b"\r", result.stdout_bytes)
+
+    def test_no_subcommand_shows_the_group_help_instead_of_a_usage_error(self) -> None:
         result = runner.invoke(app, ["completion"])
 
-        self.assertEqual(result.exit_code, 2)
+        self.assertIn("Usage:", result.output)
+        self.assertIn("install", result.output)
+        self.assertIn("remove", result.output)
+        self.assertNotIn("Missing argument", result.output)
+        self.assertNotIn("Traceback", result.output)
 
-    def test_help_explains_installation_for_each_shell(self) -> None:
+    def test_group_help_names_install_first_and_keeps_the_manual_lines(self) -> None:
         result = runner.invoke(app, ["completion", "--help"])
 
         self.assertEqual(result.exit_code, 0, result.output)
+        text = result.stdout
+        self.assertIn("jzr completion install", text)
+        self.assertLess(text.index("jzr completion install"), text.index("eval"))
+        self.assertIn('eval "$(jzr completion bash)"', text)
+        self.assertIn('eval "$(jzr completion zsh)"', text)
+        self.assertIn("jzr completion fish > ~/.config/fish/completions/jzr.fish", text)
+        self.assertIn("jzr completion powershell | Out-String | Invoke-Expression", text)
+
+    def test_print_commands_are_listed_in_the_group_help(self) -> None:
+        result = runner.invoke(app, ["completion", "--help"])
+
+        commands = result.stdout.split("Commands:", 1)[1]
         for shell in SHELLS:
             with self.subTest(shell=shell):
-                self.assertIn(shell, result.stdout)
-        self.assertIn("SHELL", result.stdout)
+                self.assertRegex(commands, rf"(?m)^  {shell}\s")
 
-    def test_registered_with_the_short_help_shown_in_the_root_help(self) -> None:
-        self.assertEqual(
-            _COMMANDS["completion"],
-            ("jzr_tools.commands.completion:app", "Print a shell completion script."),
-        )
+    def test_root_help_shows_the_group_short_help(self) -> None:
+        result = runner.invoke(app, ["--help"])
+
+        self.assertRegex(result.stdout, r"(?m)^  completion\s+Set up shell completion, or print its script\.$")
 
 
 class BashCompletionRuntimeTests(unittest.TestCase):

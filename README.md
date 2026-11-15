@@ -105,7 +105,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr bind add` | Save a long command under a short name, run as `jzr <name>` |
 | `jzr bind list` | List your shortcuts |
 | `jzr bind remove` | Remove shortcuts |
-| `jzr completion` | Print the tab-completion script for bash, zsh, fish or PowerShell |
+| `jzr completion` | Set up tab completion for bash, zsh, fish or PowerShell, or print its script |
 | `jzr version` | Print the installed toolkit version |
 
 ## Image Conversion
@@ -945,8 +945,25 @@ nothing is left, the command exits `1` instead of printing an empty result.
 
 ## Shell completion
 
-`jzr completion SHELL` prints a script that makes Tab complete commands,
-options and choices. Load it from your shell's start-up file:
+Tab can complete jzr's commands, options and choices in bash, zsh, fish and
+PowerShell. Set it up for the shell you are typing in:
+
+```bash
+jzr completion install
+```
+
+It finds the shell from the process that started jzr (name one to choose:
+`jzr completion install zsh`), writes the completion script to jzr's data
+folder, and adds one marked block to the shell's start-up file that loads
+it: `~/.bashrc`, `~/.zshrc`, or PowerShell's `profile.ps1`. fish gets
+`~/.config/fish/completions/jzr.fish` and no start-up change. Running it
+again changes nothing; `--dry-run` shows what it would do, and
+`jzr completion remove` takes it out again. It warns, without changing
+anything, when PowerShell's execution policy keeps the profile from
+running (Windows PowerShell's default) or when `~/.bash_profile` does not
+load `~/.bashrc`. After upgrading jzr, run `jzr completion install` again.
+
+To load the script yourself instead, `jzr completion SHELL` prints it:
 
 ```bash
 echo 'eval "$(jzr completion bash)"' >> ~/.bashrc

@@ -28,7 +28,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "port": ("jzr_tools.commands.network:app", "Inspect and free local ports."),
     "host": ("jzr_tools.commands.host:app", "Inspect and clean up this machine."),
     "bind": ("jzr_tools.commands.bind:app", "Save your own shortcuts for long commands."),
-    "completion": ("jzr_tools.commands.completion:app", "Print a shell completion script."),
+    "completion": ("jzr_tools.commands.completion:app", "Set up shell completion, or print its script."),
     # The one shortcut: the same command as `jzr port kill`.
     "killport": (
         "jzr_tools.commands.network:killport",
