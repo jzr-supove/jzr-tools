@@ -49,10 +49,12 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr video <from>2<to>` | Shorthand for a format pair, e.g. `jzr video mov2mp4` |
 | `jzr video info` | Show the container, duration, size and streams of video files |
 | `jzr video formats` | List video targets, the ffmpeg in use and which encoders it has |
+| `jzr video trim` | Cut a time range out of video files, exactly or instantly from a keyframe |
 | `jzr audio convert` | Convert audio files to mp3, m4a, opus, ogg, flac or wav |
 | `jzr audio <from>2<to>` | Shorthand for a format pair, e.g. `jzr audio wav2mp3` |
 | `jzr audio info` | Show the format, streams and tags of audio files |
 | `jzr audio formats` | List audio targets, the ffmpeg in use and which encoders it has |
+| `jzr audio trim` | Cut a time range out of audio files without losing quality |
 | `jzr audio tags` | Show or edit tags, cover art and lyrics of MP3, M4A, FLAC, Ogg and Opus files |
 | `jzr ffmpeg install` | Download ffmpeg and ffprobe into jzr's own folder |
 | `jzr ffmpeg status` | Show which ffmpeg and ffprobe jzr uses and where they come from |
@@ -366,6 +368,58 @@ jzr audio tags song.mp3 --export-cover front.jpg
   errors (exit code 2) and change nothing. A file that cannot be read or
   written fails on its own; the rest are still handled and the exit code
   is 1.
+
+### Trimming
+
+`jzr video trim` and `jzr audio trim` keep a time range of a file and write
+it beside the source as `<name>_trim.<ext>`, in the same container or format:
+
+```bash
+jzr video trim clip.mp4 --start 1:05 --end 1:30          # exact: starts on the asked frame
+jzr video trim clip.mp4 --start 1:05 --duration 25 --fast  # instant copy from the keyframe
+jzr video trim clip.mov --end 10 -o first-ten-seconds.mov
+jzr video trim *.mp4 --start 3 --outdir trimmed           # same cut of every file
+jzr audio trim song.flac --start 0:30 --end 2:10.500
+jzr audio trim talk.mp3 --start 90 --exact                 # re-encode for a cut to the millisecond
+```
+
+Options: `--start TIME` (default 0), `--end TIME` or `--duration TIME`
+(default: to the end of the file), `--fast` (video) or `--exact` (audio),
+`-d/--dir`, `-p/--pattern`, `-r/--recursive`, `-o/--output`, `--outdir`,
+`--overwrite`, `--dry-run`. Times are seconds (`90`, `7.5`) or
+`[H:]MM:SS[.mmm]` (`1:30`, `0:01:30.250`).
+
+- A video cut is exact by default: it starts on the asked frame and lasts the
+  asked time. The video is encoded again at high quality in the source's
+  codec (H.264, HEVC, AV1 or VP9), or in H.264 (VP9 for `webm`) when there is
+  no encoder for it; the audio is copied. This takes as long as an encode of
+  the cut part.
+- `--fast` copies the streams instead: instant and lossless, but a cut can
+  only start on a keyframe, so it starts at the keyframe at or before
+  `--start` and the result line says where:
+  `clip.mp4 -> clip_trim.mp4 (video copied, audio copied; starts at 0:05.000,
+  the keyframe before 0:07.000)`. The end is where you asked, give or take a
+  frame or two, since copied video can only be cut between whole packets.
+  `.ogv` (Theora) can only be cut with `--fast`.
+- WAV and FLAC are cut to the sample and stay lossless. MP3, AAC, Opus and
+  Vorbis are cut by copying, with no quality loss and to within one audio
+  frame (about 1/40 s); `--exact` encodes them again at the source's bitrate
+  for a cut to the millisecond.
+- Tags are kept, and so is cover art (in MP3, M4A, FLAC, Ogg and Opus).
+  The best video stream and the audio stream with the most channels are
+  kept in a video; other audio tracks and subtitles are left out, and the
+  result line names them.
+- `--output` must keep the source's extension; use `jzr video convert` or
+  `jzr audio convert` to change the format. `--start`, `--end` and
+  `--duration` that contradict each other are usage errors (exit code 2). A
+  start past the end of a file fails that file and names its length; an end
+  past it cuts to the end, and the result line says so.
+- Scanning a directory picks video (or audio) files and leaves out earlier
+  `_trim` results. An audio file given to `jzr video trim`, or a video given
+  to `jzr audio trim`, fails on its own, as does any file ffmpeg cannot
+  read; the rest are still cut and the exit code is 1.
+- `--dry-run`, the temporary `jzr-tmp-...` output and the progress line work
+  as in `jzr audio convert`.
 
 ## Ports
 

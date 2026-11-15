@@ -31,6 +31,7 @@ from jzr_tools.commands._media import (
     info_command,
     resolve_source,
 )
+from jzr_tools.commands._trim import trim_command
 from jzr_tools.core.media import (
     AUDIO_FORMATS,
     VIDEO_CODECS,
@@ -334,3 +335,5 @@ app.add_command(
         help_text="Show the target formats, the ffmpeg in use and its encoders.",
     )
 )
+
+app.add_command(trim_command("video"))

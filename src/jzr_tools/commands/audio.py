@@ -33,6 +33,7 @@ from jzr_tools.commands._media import (
     info_command,
     resolve_source,
 )
+from jzr_tools.commands._trim import trim_command
 from jzr_tools.core.media import AUDIO_EXTENSIONS, AUDIO_FORMATS
 
 _PAIR_PATTERN = re.compile(r"^([a-z0-9]+)2([a-z0-9]+)$")
@@ -264,6 +265,7 @@ app.add_command(
         help_text="Show the target formats, the ffmpeg in use and its audio encoders.",
     )
 )
+app.add_command(trim_command("audio"))
 
 
 # --- tags --------------------------------------------------------------------

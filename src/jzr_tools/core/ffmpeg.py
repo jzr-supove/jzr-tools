@@ -338,3 +338,44 @@ def run(
         raise
     finally:
         shutil.rmtree(pass_dir, ignore_errors=True)
+
+
+def keyframe_before(path: Path, tool: Tool, seconds: float, stream_index: int) -> float | None:
+    """Return the time of the keyframe a seek to ``seconds`` lands on.
+
+    ffprobe reads one packet of the stream from where ``-ss`` would start, so
+    the answer is where a stream-copy cut really begins, measured from the
+    start of the file. ``None`` when ffprobe cannot tell.
+    """
+    offset = f"{seconds:.6f}".rstrip("0").rstrip(".") or "0"
+    argv = [
+        tool.path,
+        "-v",
+        "error",
+        "-select_streams",
+        str(stream_index),
+        "-show_entries",
+        "packet=pts_time,flags:format=start_time",
+        "-of",
+        "json",
+        "-read_intervals",
+        f"+{offset}%+#1",
+        "-i",
+        os.path.abspath(path),
+    ]
+    try:
+        completed = subprocess.run(argv, capture_output=True)
+    except OSError:
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        data = json.loads(_decode(completed.stdout))
+        packet = (data.get("packets") or [None])[0]
+        if not packet or not str(packet.get("flags", "")).startswith("K"):
+            return None
+        pts = float(packet["pts_time"])
+        start = float((data.get("format") or {}).get("start_time") or 0)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+    return max(0.0, pts - start)

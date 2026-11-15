@@ -542,6 +542,51 @@ class AudioTagsStartupTests(_ObservedTestCase):
         self.assertIn("mp3", obs.stdout)
 
 
+class TrimStartupTests(_ObservedTestCase):
+    def test_group_help_lists_trim(self) -> None:
+        for group in ("video", "audio"):
+            with self.subTest(group=group):
+                obs = self.run_cli(group, "-h")
+                self.assert_ok(obs)
+                listed = re.findall(
+                    r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE
+                )
+                self.assertIn("trim", listed)
+
+    def test_trim_help_exits_zero_and_loads_no_heavy_module(self) -> None:
+        for group in ("video", "audio"):
+            with self.subTest(group=group):
+                obs = self.run_cli(group, "trim", "-h")
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
+                self.assertIn("--start", obs.stdout)
+                self.assert_not_loaded(obs, HEAVY_MODULES)
+
+    def test_audio_trim_help_does_not_load_mutagen(self) -> None:
+        obs = self.run_cli("audio", "trim", "-h")
+        self.assert_ok(obs)
+        self.assert_no_prefix_loaded(obs, ["mutagen"])
+
+    def test_importing_the_trim_module_does_not_import_mutagen(self) -> None:
+        code = (
+            "import sys\n"
+            "import jzr_tools.core.trim\n"
+            "loaded = sorted(m for m in sys.modules if m == 'mutagen' or m.startswith('mutagen.'))\n"
+            "print('@@LOADED@@' + ','.join(loaded))\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=PROJECT_ROOT,
+            env=_env(),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        line = next(l for l in proc.stdout.splitlines() if l.startswith("@@LOADED@@"))
+        self.assertEqual(line, "@@LOADED@@")
+
+
 class FfmpegStartupTests(_ObservedTestCase):
     def test_root_help_lists_ffmpeg_with_its_help(self) -> None:
         obs = self.run_cli("-h")
