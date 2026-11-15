@@ -1,13 +1,51 @@
 [build-system]
-requires = ["hatchling>=1.24.0"]
+# 1.27 is the first hatchling with SPDX `license` and `license-files`.
+requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
 
 [project]
 name = "jzr-tools"
 version = "0.1.0"
-description = "Personal cross-platform CLI toolkit."
+description = "Fast everyday command-line tools: convert images, video and audio, trim and compress media, make GIFs, edit audio tags, free busy ports and clean up your machine."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "JZR SUPOVE" }]
 requires-python = ">=3.11"
+keywords = [
+  "cli",
+  "command-line",
+  "toolkit",
+  "image-conversion",
+  "video-conversion",
+  "audio-conversion",
+  "ffmpeg",
+  "gif",
+  "audio-tags",
+  "kill-port",
+  "developer-tools",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: End Users/Desktop",
+  "Intended Audience :: System Administrators",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+  "Topic :: Multimedia :: Sound/Audio :: Conversion",
+  "Topic :: Multimedia :: Video :: Conversion",
+  "Topic :: System :: Systems Administration",
+  "Topic :: Utilities",
+]
 dependencies = [
   "click>=8.1,<9.0",
   "mutagen>=1.47,<2.0",
@@ -17,8 +55,25 @@ dependencies = [
   "questionary>=2.0,<3.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/jzr-supove/jzr-tools"
+Source = "https://github.com/jzr-supove/jzr-tools"
+Issues = "https://github.com/jzr-supove/jzr-tools/issues"
+
 [project.scripts]
 jzr = "jzr_tools.cli:main"
+
+[tool.hatch.build.targets.sdist]
+# Only what is needed to build, test and credit the package; local notes and
+# tool folders never end up in the source archive.
+include = [
+  "/src",
+  "/tests",
+  "/README.md",
+  "/LICENSE",
+  "/NOTICE",
+  "/pyproject.toml",
+]
 
 [tool.uv]
 package = true

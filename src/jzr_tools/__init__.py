@@ -1,4 +1,4 @@
-"""jzr-tools: a personal cross-platform CLI toolkit."""
+"""jzr-tools: fast everyday tools for images, video, audio, ports and your machine."""
 
 __all__ = ["__version__"]
 

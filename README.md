@@ -1,11 +1,34 @@
 # jzr-tools
 
-`jzr-tools` is a personal cross-platform CLI toolkit packaged as a Python module
-with an executable entrypoint.
+`jzr-tools` puts fast everyday jobs behind one command, `jzr`: convert images,
+video and audio, trim and compress media, make GIFs, edit audio tags, free busy
+ports and clean up your machine. It runs on Windows, Linux and macOS.
 
-## Install
+## Install from PyPI
 
-For global usage with `pipx`:
+`jzr-tools` needs Python 3.11 or newer. Install the `jzr` command with
+[pipx](https://pipx.pypa.io/):
+
+```bash
+pipx install jzr-tools
+jzr --help
+```
+
+Or run it without installing, with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uvx --from jzr-tools jzr --help
+```
+
+The video and audio commands use ffmpeg. If it is not on your `PATH`, run
+`jzr ffmpeg install` once to download it into jzr's own folder.
+
+To upgrade later, run `pipx upgrade jzr-tools`; `uvx` picks up new releases
+with `uvx --from jzr-tools@latest jzr`.
+
+## Install from source
+
+For global usage with `pipx`, from a clone of the repository:
 
 ```bash
 pipx install .
@@ -897,3 +920,17 @@ accents, Russian and Uzbek Cyrillic are transliterated (`Привет мир` be
 `privet-mir`), and letters such as `ß` and `ø` are spelled out. Other scripts
 are dropped; if nothing is left, the command exits `1` instead of printing an
 empty result.
+
+## Contributing
+
+Pull requests are welcome. See [CONTRIBUTING.md](https://github.com/jzr-supove/jzr-tools/blob/main/CONTRIBUTING.md)
+for how a tool is laid out, how to add one and how to run the tests.
+
+## License and credit
+
+`jzr-tools` is created by JZR SUPOVE and released under the
+[Apache License 2.0](https://github.com/jzr-supove/jzr-tools/blob/main/LICENSE).
+You may use, change and redistribute it, including in commercial products.
+When you redistribute it or a work based on it, keep the
+[NOTICE](https://github.com/jzr-supove/jzr-tools/blob/main/NOTICE) file with
+its credit line, as section 4 of the license asks.

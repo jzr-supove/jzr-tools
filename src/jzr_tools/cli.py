@@ -103,7 +103,7 @@ class LazyGroup(click.Group):
     help="Show the installed version and exit.",
 )
 def app() -> None:
-    """Personal cross-platform CLI toolkit."""
+    """Fast everyday tools for images, video, audio, ports and your machine."""
 
 
 @app.command()
