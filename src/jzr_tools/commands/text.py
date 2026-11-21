@@ -1,6 +1,7 @@
 """Text-related CLI commands."""
 
 from datetime import date
+import os
 from pathlib import Path
 import sys
 from typing import NoReturn
@@ -322,3 +323,147 @@ app.add_command(click.Command(
     help=slug.help,
     hidden=True,
 ))
+
+
+_DIFF_STYLES = {
+    "removed": {"fg": "red"},
+    "added": {"fg": "green"},
+    "hunk": {"fg": "cyan"},
+}
+_DIFF_MARKS = {"context": " ", "removed": "-", "added": "+"}
+
+
+@app.command("diff")
+@click.argument("old")
+@click.argument("new")
+@click.option(
+    "-U",
+    "--unified",
+    "context",
+    type=click.IntRange(min=0),
+    default=3,
+    show_default=True,
+    metavar="N",
+    help="Lines of context around each change.",
+)
+@click.option(
+    "-w", "--ignore-space", is_flag=True, help="Ignore spaces and tabs at the start and end of lines."
+)
+@click.option("--strict-eol", is_flag=True, help="Treat CRLF and LF line endings as different.")
+@click.option(
+    "--color",
+    type=click.Choice(["auto", "always", "never"]),
+    default="auto",
+    show_default=True,
+    help="Colour the output (auto: only on a terminal, and not when NO_COLOR is set).",
+)
+def diff_command(
+    old: str, new: str, context: int, ignore_space: bool, strict_eol: bool, color: str
+) -> None:
+    """Show how text file NEW differs from OLD, as a unified diff.
+
+    Exits 0 when they are the same, 1 when they differ and 2 when a file
+    cannot be compared. CRLF and LF count as the same unless --strict-eol is
+    given. Use - for stdin on one side.
+    """
+    if old == "-" and new == "-":
+        raise click.UsageError("Only one of OLD and NEW can be - (stdin).")
+
+    from jzr_tools.core import textdiff
+
+    texts: list[str] = []
+    errors: list[str] = []
+    for name in (old, new):
+        try:
+            texts.append(_diff_input(name, textdiff.decode))
+        except _DiffInputError as error:
+            errors.append(str(error))
+    if errors:
+        for line in errors:
+            click.echo(line, err=True)
+        raise click.exceptions.Exit(2)
+
+    old_lines, new_lines = (textdiff.split_lines(text) for text in texts)
+    options = {"context": context, "ignore_space": ignore_space}
+    rows = textdiff.diff_rows(old_lines, new_lines, strict_eol=strict_eol, **options)
+    if not rows:
+        if not strict_eol and textdiff.diff_rows(old_lines, new_lines, strict_eol=True, **options):
+            click.echo(
+                f"{old} and {new} differ only in line endings; add --strict-eol to compare them.",
+                err=True,
+            )
+        return
+
+    _diff_lf_output()
+    coloured = color == "always" or (
+        color == "auto" and not os.environ.get("NO_COLOR") and _stdout_is_terminal()
+    )
+    out = [_styled(f"--- {old}", coloured, bold=True), _styled(f"+++ {new}", coloured, bold=True)]
+    for row in rows:
+        if row.kind == "hunk":
+            out.append(_styled(row.text, coloured, **_DIFF_STYLES["hunk"]))
+        elif row.kind == "note":
+            out.append(row.text)
+        else:
+            line = _DIFF_MARKS[row.kind] + row.text
+            style = _DIFF_STYLES.get(row.kind)
+            if not coloured or style is None:
+                out.append(line)
+            elif row.span is None:
+                out.append(click.style(line, **style))
+            else:
+                start, end = row.span[0] + 1, row.span[1] + 1
+                out.append(
+                    click.style(line[:start], **style)
+                    + click.style(line[start:end], underline=True, **style)
+                    + click.style(line[end:], **style)
+                )
+    click.echo("\n".join(out), color=True if coloured else None)
+    raise click.exceptions.Exit(1)
+
+
+class _DiffInputError(Exception):
+    """One side cannot be compared; the message is the whole stderr line."""
+
+
+def _diff_input(name: str, decode) -> str:  # noqa: ANN001 - core.textdiff.decode
+    if name == "-":
+        data = click.get_binary_stream("stdin").read()
+        label = "<stdin>"
+    else:
+        label = name
+        path = Path(name)
+        if path.is_dir():
+            raise _DiffInputError(f"{label}: is a folder")
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError:
+            raise _DiffInputError(f"{label}: not found") from None
+        except OSError as error:
+            raise _DiffInputError(f"{label}: cannot read: {error.strerror or error}") from None
+    text = decode(data)
+    if text is None:
+        raise _DiffInputError(f"{label} looks binary; not compared")
+    return text
+
+
+def _styled(text: str, coloured: bool, **style: object) -> str:
+    return click.style(text, **style) if coloured else text
+
+
+def _stdout_is_terminal() -> bool:
+    stream = click.get_text_stream("stdout")
+    try:
+        return stream.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _diff_lf_output() -> None:
+    """End lines with LF on Windows too, so a saved diff is a valid patch."""
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        try:
+            reconfigure(newline="\n")
+        except (OSError, ValueError):
+            pass

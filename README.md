@@ -98,6 +98,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr text slug` | Turn text into a URL-safe kebab-case slug, optionally dated and copied |
 | `jzr text base64` | Encode text or a file as Base64, or decode it |
 | `jzr text url` | Percent-encode or decode text for URLs, or show the parts of a URL |
+| `jzr text diff` | Show how two text files differ, as a coloured unified diff |
 | `jzr file rename` | Rename many files at once: replace text, change case, number them; previews first |
 | `jzr uuid` | Generate UUIDs, version 4 or time-ordered version 7 |
 | `jzr password` | Generate strong passwords or word passphrases |
@@ -106,6 +107,8 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr timestamp` | Turn Unix time into dates and dates into Unix time, in any time zone |
 | `jzr data json` | Pretty-print, minify, check or rewrite JSON, changing only whitespace |
 | `jzr jwt` | Show a JWT's header, payload and times, and check an HMAC signature |
+| `jzr env example` | Turn a `.env` into a `.env.example`: the keys, without values |
+| `jzr env compare` | List the keys only one of two `.env` files has; exit 1 if any |
 | `jzr port show` | List listening ports and their processes, or show what uses given ports |
 | `jzr port kill` | Force-kill the processes using one or more local ports |
 | `jzr killport` | Shortcut for `jzr port kill` |
@@ -1023,6 +1026,29 @@ parameter on its own line, in order, with duplicates and empty names kept
 and values decoded. A password in the URL shows as `***`. `--json` prints the
 same for scripts.
 
+### Diff
+
+```bash
+jzr text diff old.txt new.txt          # unified diff, 3 lines of context
+jzr text diff -U 0 a.conf b.conf       # no context lines
+jzr text diff -w a.py b.py             # ignore spaces at the start and end of lines
+jzr text diff old.txt new.txt > change.patch
+```
+
+- The output is a unified diff, as `diff -u` writes it, so `patch` and
+  `git apply` read it. It exits 0 when the files are the same (and prints
+  nothing), 1 when they differ and 2 when one cannot be compared, as `diff`
+  does.
+- On a terminal, removed lines are red and added lines green. A line that
+  was edited rather than replaced is shown right above its new version, with
+  the changed characters underlined. `--color always|never` decides instead;
+  `NO_COLOR` turns the automatic colour off.
+- CRLF and LF line endings count as the same; when they are the only
+  difference, jzr says so on stderr. `--strict-eol` compares them.
+- A missing newline at the end of a file shows as
+  `\ No newline at end of file`. Files with NUL bytes or that are not UTF-8
+  are not compared. Use `-` to read one side from stdin.
+
 ## Timestamps
 
 ```bash
@@ -1122,6 +1148,37 @@ nbf  not present
   signature, and says which.
 - `--json` prints the header, payload, each time claim and the signature
   result. The token and the secret never appear in error messages.
+
+## .env files
+
+```bash
+jzr env example                         # print the keys of .env as KEY= lines
+jzr env example -o .env.example         # write them to a file
+jzr env compare                         # .env.example against .env
+jzr env compare .env.staging .env.production --values
+```
+
+```
+Only in .env.example (2):
+  API_KEY
+  DB_URL
+Only in .env (1):
+  DEBUG
+```
+
+- `example` keeps each key once, in the order it first appears, and leaves
+  out every value and comment, so the result is safe to commit. `-o FILE`
+  writes it (`--overwrite` to replace a file); it refuses to write over the
+  file it reads. `-c` copies it too.
+- `compare` exits 1 when the key sets differ, so CI can check that `.env`
+  has every key of `.env.example`; it exits 2 when a file cannot be read.
+  `--values` also lists shared keys whose values differ, with both values;
+  without it no value is ever printed. `--json` prints the result for
+  scripts.
+- The files are read as most loaders read them: `export KEY=value`, `#`
+  comments, single or double quotes that may span lines. Values are not
+  expanded. A line that cannot be read stops the command with
+  `FILE:LINE: what is wrong`, without showing its value.
 
 ## Renaming files
 

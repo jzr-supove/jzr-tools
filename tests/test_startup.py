@@ -21,7 +21,7 @@ SRC_PATH = PROJECT_ROOT / "src"
 
 LAZY_NAMES = {
     "image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg", "completion", "file",
-    "uuid", "password", "random", "hash", "timestamp", "data", "jwt",
+    "uuid", "password", "random", "hash", "timestamp", "data", "jwt", "env",
 }
 BOX_CHARS = ("╭", "│", "╰", "─")
 
@@ -397,6 +397,7 @@ class RegistryTests(unittest.TestCase):
                 "timestamp": "jzr_tools.commands.timestamp:timestamp_command",
                 "data": "jzr_tools.commands.data:app",
                 "jwt": "jzr_tools.commands.jwt:jwt_command",
+                "env": "jzr_tools.commands.env:app",
             },
         )
 
@@ -1048,6 +1049,103 @@ class DataAndJwtStartupTests(_ObservedTestCase):
         obs = self.run_cli("jwt", "a.b.c")
         self.assertEqual(obs.exit_code, "1", obs.describe())
         self.assertTrue(obs.loaded("jzr_tools.core.jwt"), obs.describe())
+
+
+ENV_DIFF_MODULES = [
+    "jzr_tools.core.envfile",
+    "jzr_tools.core.textdiff",
+    "jzr_tools.commands.env",
+]
+
+
+class EnvAndTextDiffStartupTests(_ObservedTestCase):
+    def test_registry_entry_points_at_the_group_with_its_help(self) -> None:
+        sys.path.insert(0, str(SRC_PATH))
+        try:
+            cli = importlib.import_module("jzr_tools.cli")
+        finally:
+            sys.path.remove(str(SRC_PATH))
+        self.assertEqual(
+            cli.app.lazy_commands["env"],
+            ("jzr_tools.commands.env:app", "Make .env.example files and compare .env keys."),
+        )
+
+    def test_root_help_lists_env_with_its_help(self) -> None:
+        obs = self.run_cli("--help")
+        self.assert_ok(obs)
+        self.assertRegex(
+            obs.stdout, r"(?m)^  env\s+Make \.env\.example files and compare \.env keys\."
+        )
+
+    def test_help_loads_no_heavy_or_command_specific_module(self) -> None:
+        cases = [
+            ["env", "-h"],
+            ["env", "example", "-h"],
+            ["env", "compare", "-h"],
+            ["text", "diff", "-h"],
+        ]
+        for args in cases:
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
+                self.assert_not_loaded(
+                    obs, HEAVY_MODULES + ["jzr_tools.core.envfile", "jzr_tools.core.textdiff"]
+                )
+
+    def test_version_and_root_help_never_load_the_env_or_diff_code(self) -> None:
+        for args in (["--version"], ["--help"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, ENV_DIFF_MODULES + ["difflib"])
+
+    def test_other_text_commands_never_load_the_env_or_diff_code(self) -> None:
+        obs = self.run_cli("text", "slug", "x")
+        self.assert_ok(obs)
+        self.assert_not_loaded(obs, ENV_DIFF_MODULES)
+
+    def test_env_help_lists_exactly_compare_and_example(self) -> None:
+        obs = self.run_cli("env", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertEqual(sorted(listed), ["compare", "example"])
+
+    def test_example_help_lists_its_options(self) -> None:
+        obs = self.run_cli("env", "example", "-h")
+        self.assert_ok(obs)
+        for option in ("-o", "--output", "--overwrite", "-c", "--copy"):
+            self.assertRegex(obs.stdout, rf"(?<![\w-]){re.escape(option)}(?![\w-])")
+
+    def test_compare_help_lists_its_options(self) -> None:
+        obs = self.run_cli("env", "compare", "-h")
+        self.assert_ok(obs)
+        for option in ("--values", "--json"):
+            self.assertIn(option, obs.stdout)
+
+    def test_text_group_help_lists_diff(self) -> None:
+        obs = self.run_cli("text", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("diff", listed)
+        self.assertIn("Text utilities.", obs.stdout)
+        self.assert_not_loaded(obs, ["jzr_tools.core.textdiff"])
+
+    def test_text_diff_help_lists_its_options(self) -> None:
+        obs = self.run_cli("text", "diff", "-h")
+        self.assert_ok(obs)
+        for option in ("-U", "--unified", "-w", "--ignore-space", "--strict-eol", "--color"):
+            self.assertRegex(obs.stdout, rf"(?<![\w-]){re.escape(option)}(?![\w-])")
+
+    def test_running_env_example_loads_its_core_module(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="jzr-startup-env-") as folder:
+            path = Path(folder) / "x.env"
+            path.write_text("A=1\n", encoding="utf-8")
+            obs = self.run_cli("env", "example", str(path))
+        self.assert_ok(obs)
+        self.assertEqual(obs.stdout.strip(), "A=")
+        self.assertTrue(obs.loaded("jzr_tools.core.envfile"), obs.describe())
+        self.assert_not_loaded(obs, ["jzr_tools.core.textdiff"])
 
 
 if __name__ == "__main__":
