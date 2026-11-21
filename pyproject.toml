@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jzr-tools"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fast everyday command-line tools: convert images, video and audio, trim and compress media, make GIFs, edit audio tags, free busy ports and clean up your machine."
 readme = "README.md"
 license = "Apache-2.0"

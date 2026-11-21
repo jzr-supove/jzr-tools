@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 
@@ -28,6 +29,10 @@ from jzr_tools.core.text import kebab_case, slugify
 runner = CliRunner()
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = PROJECT_ROOT / "src"
+# The version `jzr --version` must print: the one in pyproject.toml.
+PROJECT_VERSION = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+    "project"
+]["version"]
 
 # Smallest valid PNG, so image tests do not depend on a backend to build fixtures.
 ONE_PIXEL_PNG = base64.b64decode(
@@ -93,7 +98,7 @@ class CliTests(unittest.TestCase):
         result = runner.invoke(app, ["--version"])
 
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(result.stdout.strip(), "0.1.0")
+        self.assertEqual(result.stdout.strip(), PROJECT_VERSION)
 
     def test_slug_command_uses_text_core(self) -> None:
         result = runner.invoke(app, ["text", "slug", "Hello, World!"])
@@ -158,7 +163,7 @@ class CliTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0)
-        self.assertEqual(result.stdout.strip(), "0.1.0")
+        self.assertEqual(result.stdout.strip(), PROJECT_VERSION)
 
 
 class ImageCoreTests(unittest.TestCase):

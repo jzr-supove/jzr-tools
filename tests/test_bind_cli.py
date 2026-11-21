@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -32,6 +33,10 @@ except ImportError:  # Windows
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = PROJECT_ROOT / "src"
+# The version `jzr --version` must print: the one in pyproject.toml.
+PROJECT_VERSION = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+    "project"
+]["version"]
 POSIX = os.name == "posix"
 
 HIDDEN_MARK = "(hidden by a built-in command; use: jzr bind run host)"
@@ -525,7 +530,7 @@ class RunDispatchTests(BindTestCase):
         result, fake = self.run_with_mock("version")
 
         self.assertEqual(result.exit_code, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "0.1.0")
+        self.assertEqual(result.stdout.strip(), PROJECT_VERSION)
         fake.assert_not_called()
 
     def test_bind_run_of_an_unknown_name_exits_1(self) -> None:
@@ -583,7 +588,7 @@ class RunDispatchTests(BindTestCase):
         slug = self.jzr("text", "slug", "Hello World")
         self.assertEqual(slug.exit_code, 0, slug.stderr)
         self.assertEqual(slug.stdout.strip(), "hello-world")
-        self.assertEqual(self.jzr("--version").stdout.strip(), "0.1.0")
+        self.assertEqual(self.jzr("--version").stdout.strip(), PROJECT_VERSION)
         self.assertEqual(self.jzr("-h").exit_code, 0)
 
     def test_running_never_modifies_the_file(self) -> None:
