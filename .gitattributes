@@ -1,3 +1,5 @@
 # Shell scripts must keep LF line endings, even in a Windows checkout:
 # `sh` reads a trailing carriage return as part of each command.
 *.sh text eol=lf
+# Packaged data is read byte for byte; keep it identical on every platform.
+src/jzr_tools/data/*.txt text eol=lf

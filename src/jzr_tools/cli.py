@@ -26,6 +26,13 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "ffmpeg": ("jzr_tools.commands.ffmpeg:app", "Install and check the ffmpeg jzr uses."),
     "file": ("jzr_tools.commands.file:app", "Rename and organise files."),
     "text": ("jzr_tools.commands.text:app", "Text utilities."),
+    "uuid": ("jzr_tools.commands.generate:uuid_command", "Generate UUIDs (v4, or v7 with --v7)."),
+    "password": ("jzr_tools.commands.generate:password_command", "Generate passwords or passphrases."),
+    "random": (
+        "jzr_tools.commands.generate:random_group",
+        "Pick random numbers or items, or shuffle a list.",
+    ),
+    "hash": ("jzr_tools.commands.hashing:hash_command", "Hash files or text (SHA-256 by default)."),
     "port": ("jzr_tools.commands.network:app", "Inspect and free local ports."),
     "host": ("jzr_tools.commands.host:app", "Inspect and clean up this machine."),
     "bind": ("jzr_tools.commands.bind:app", "Save your own shortcuts for long commands."),

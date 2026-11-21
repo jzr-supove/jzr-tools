@@ -21,6 +21,7 @@ SRC_PATH = PROJECT_ROOT / "src"
 
 LAZY_NAMES = {
     "image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg", "completion", "file",
+    "uuid", "password", "random", "hash",
 }
 BOX_CHARS = ("╭", "│", "╰", "─")
 
@@ -388,6 +389,10 @@ class RegistryTests(unittest.TestCase):
                 "audio": "jzr_tools.commands.audio:app",
                 "completion": "jzr_tools.commands.completion:app",
                 "file": "jzr_tools.commands.file:app",
+                "uuid": "jzr_tools.commands.generate:uuid_command",
+                "password": "jzr_tools.commands.generate:password_command",
+                "random": "jzr_tools.commands.generate:random_group",
+                "hash": "jzr_tools.commands.hashing:hash_command",
             },
         )
 
@@ -841,6 +846,59 @@ class FileRenameStartupTests(_ObservedTestCase):
                 obs = self.run_cli(*args)
                 self.assert_ok(obs)
                 self.assert_not_loaded(obs, RENAME_MODULES)
+
+
+GENERATE_MODULES = [
+    "jzr_tools.core.generate",
+    "jzr_tools.core.hashing",
+    "jzr_tools.commands.generate",
+    "jzr_tools.commands.hashing",
+]
+
+
+class GenerateStartupTests(_ObservedTestCase):
+    def test_root_help_lists_the_four_commands_with_their_help(self) -> None:
+        obs = self.run_cli("--help")
+        self.assert_ok(obs)
+        expected = {
+            "uuid": "Generate UUIDs (v4, or v7 with --v7).",
+            "password": "Generate passwords or passphrases.",
+            "random": "Pick random numbers or items, or shuffle a list.",
+            "hash": "Hash files or text (SHA-256 by default).",
+        }
+        for name, help_text in expected.items():
+            with self.subTest(name=name):
+                self.assertRegex(obs.stdout, rf"(?m)^  {name}\s+{re.escape(help_text)}")
+
+    def test_help_of_each_command_exits_zero_and_loads_no_heavy_module(self) -> None:
+        cases = [
+            ["uuid", "-h"],
+            ["password", "-h"],
+            ["random", "-h"],
+            ["random", "int", "-h"],
+            ["random", "pick", "-h"],
+            ["random", "shuffle", "-h"],
+            ["hash", "-h"],
+        ]
+        for args in cases:
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
+                self.assert_not_loaded(obs, HEAVY_MODULES)
+
+    def test_random_help_lists_int_pick_and_shuffle(self) -> None:
+        obs = self.run_cli("random", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertEqual(sorted(listed), ["int", "pick", "shuffle"])
+
+    def test_other_calls_never_load_the_generator_or_hash_code(self) -> None:
+        for args in (["--version"], ["text", "slug", "x"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, GENERATE_MODULES)
 
 
 if __name__ == "__main__":

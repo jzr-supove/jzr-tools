@@ -3,3 +3,12 @@ Copyright 2026 JZR SUPOVE
 
 This product includes software developed by JZR SUPOVE
 (https://github.com/jzr-supove/jzr-tools).
+
+This product includes the EFF Long Wordlist
+(src/jzr_tools/data/eff_large_wordlist.txt), created by Joseph Bonneau for
+the Electronic Frontier Foundation and licensed under the Creative Commons
+Attribution 4.0 International License
+(https://creativecommons.org/licenses/by/4.0/).
+Source: https://www.eff.org/files/2016/07/18/eff_large_wordlist.txt
+Changes: the dice numbers were removed; the 7,776 words are unchanged.
+EFF does not endorse this product.

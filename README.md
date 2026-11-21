@@ -97,6 +97,10 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr ffmpeg remove` | Delete the ffmpeg that `jzr ffmpeg install` downloaded |
 | `jzr text slug` | Turn text into a URL-safe kebab-case slug, optionally dated and copied |
 | `jzr file rename` | Rename many files at once: replace text, change case, number them; previews first |
+| `jzr uuid` | Generate UUIDs, version 4 or time-ordered version 7 |
+| `jzr password` | Generate strong passwords or word passphrases |
+| `jzr random` | Random numbers (`int`), picks (`pick`) or a shuffled list (`shuffle`) |
+| `jzr hash` | Hash files or text, or check a `SHA256SUMS` list |
 | `jzr port show` | List listening ports and their processes, or show what uses given ports |
 | `jzr port kill` | Force-kill the processes using one or more local ports |
 | `jzr killport` | Shortcut for `jzr port kill` |
@@ -981,6 +985,58 @@ dot, `CON`, ...) fail on every system, so renamed files still copy to
 Windows. `--json` prints the plan or the result for scripts, `-v` also lists
 the files whose name stays. The exit code is `1` if any file failed.
 
+## Generators
+
+```bash
+jzr uuid                       # 5cdd86e0-af4b-4c87-9cee-5ea81baaa2b5
+jzr uuid --v7 -n 3             # time-ordered: they sort in the order made
+jzr password                   # 20 characters: letters, digits and symbols
+jzr password -l 12 --no-symbols --no-similar
+jzr password -w 6              # bobcat-rotten-distrust-chamber-spore-cinch
+jzr password -c                # copy to the clipboard without printing it
+jzr random int                 # 1 to 100
+jzr random int -10 10 -n 5 --unique
+jzr random pick tea coffee water
+jzr random shuffle < names.txt
+```
+
+`jzr uuid` makes version 4 UUIDs; `--v7` makes version 7 ones, which start
+with the time, so a batch made in one run sorts in creation order.
+`--upper`, `--no-hyphens`, `-n` and `-c` (copy as well) change the output.
+
+`jzr password` always uses at least one character of each type it is given
+(`--no-upper`, `--no-lower`, `--no-digits`, `--no-symbols` take one out;
+`--no-similar` leaves out `I l 1 O 0 o`). `-w N` makes a passphrase of N words
+(3-20) from the EFF Long Wordlist, joined by `-` (`--separator`). On a
+terminal it also says how strong the result is (`20 characters, about 129
+bits`). `-c` puts it on the clipboard instead of the screen, so it does not
+stay in your terminal's history.
+
+`jzr random int [MIN MAX]` includes both ends; `--unique` never repeats a
+number, even across a huge range. `jzr random pick` and `jzr random shuffle`
+take items as arguments, or one per line on stdin; `pick -n 3` picks three
+different ones, `--repeat` allows repeats.
+
+Every random value comes from the operating system's secure source
+(Python's `secrets`), with no bias towards any value.
+
+## Hashes
+
+```bash
+jzr hash file.iso                          # sha256, printed like sha256sum
+jzr hash *.zip > SHA256SUMS                # a list sha256sum -c can read
+jzr hash -c SHA256SUMS                     # file.zip: OK / FAILED / missing
+jzr hash file.iso --expect 9c2c9d42...     # OK or MISMATCH (exit 1)
+jzr hash -t "some text" -a md5             # hash text instead of a file
+```
+
+`-a` chooses `md5`, `sha1`, `sha256` (default), `sha384`, `sha512`,
+`sha3-256`, `sha3-512` or `blake2b`. Without files, jzr hashes stdin. The
+lines end in LF on every system, so a list written on Windows works with
+`sha256sum -c` too. `--check` finds the files next to the list, whatever
+folder you run it from, and takes the algorithm from the digest length (or
+`-a`). `--json` prints the results for scripts.
+
 ## Shell completion
 
 Tab can complete jzr's commands, options and choices in bash, zsh, fish and
@@ -1031,3 +1087,8 @@ You may use, change and redistribute it, including in commercial products.
 When you redistribute it or a work based on it, keep the
 [NOTICE](https://github.com/jzr-supove/jzr-tools/blob/main/NOTICE) file with
 its credit line, as section 4 of the license asks.
+
+`jzr password -w` uses the [EFF Long Wordlist](https://www.eff.org/dice) by
+Joseph Bonneau for the Electronic Frontier Foundation, under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The words are
+unchanged; only the dice numbers were removed. EFF does not endorse jzr.
