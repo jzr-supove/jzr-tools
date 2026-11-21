@@ -96,11 +96,14 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr ffmpeg status` | Show which ffmpeg and ffprobe jzr uses and where they come from |
 | `jzr ffmpeg remove` | Delete the ffmpeg that `jzr ffmpeg install` downloaded |
 | `jzr text slug` | Turn text into a URL-safe kebab-case slug, optionally dated and copied |
+| `jzr text base64` | Encode text or a file as Base64, or decode it |
+| `jzr text url` | Percent-encode or decode text for URLs, or show the parts of a URL |
 | `jzr file rename` | Rename many files at once: replace text, change case, number them; previews first |
 | `jzr uuid` | Generate UUIDs, version 4 or time-ordered version 7 |
 | `jzr password` | Generate strong passwords or word passphrases |
 | `jzr random` | Random numbers (`int`), picks (`pick`) or a shuffled list (`shuffle`) |
 | `jzr hash` | Hash files or text, or check a `SHA256SUMS` list |
+| `jzr timestamp` | Turn Unix time into dates and dates into Unix time, in any time zone |
 | `jzr port show` | List listening ports and their processes, or show what uses given ports |
 | `jzr port kill` | Force-kill the processes using one or more local ports |
 | `jzr killport` | Shortcut for `jzr port kill` |
@@ -979,6 +982,78 @@ The result is ASCII. Accented Latin letters lose their accents, Russian and
 Uzbek Cyrillic are transliterated (`Привет мир` becomes `privet-mir`), and
 letters such as `ß` and `ø` are spelled out. Other scripts are dropped; if
 nothing is left, the command exits `1` instead of printing an empty result.
+
+### Base64
+
+```bash
+jzr text base64 "hello"                 # aGVsbG8=
+jzr text base64 -d aGVsbG8=             # hello
+jzr text base64 -f logo.png             # a file's bytes
+jzr text base64 -d -o logo.png < logo.b64
+jzr text base64 --url-safe "a?b"        # YT9i, the - and _ alphabet, no padding
+```
+
+Without text or `--file`, it reads stdin, and when encoding it uses the bytes
+exactly: `echo hi | jzr text base64` gives `aGkK`, the newline included, as
+`base64` does (PowerShell pipes end lines with `\r\n`, giving `aGkNCg==`;
+pass the text as an argument to leave the line break out). Decoding ignores spaces and line breaks but refuses anything
+else that is off (a wrong character, wrong padding, a length no data has)
+rather than guessing. Decoded bytes that are not text are not printed; write
+them with `-o FILE` (`--overwrite` to replace a file). `-c` also copies the
+result.
+
+### URLs
+
+```bash
+jzr text url "a b&c=d"                  # a%20b%26c%3Dd
+jzr text url -d "a%20b%26c%3Dd"         # a b&c=d
+jzr text url --form "a b"               # a+b, as in query strings and forms
+jzr text url --parse "https://bob:secret@example.com:8443/a?q=1&q=2#top"
+```
+
+Encoding works like JavaScript's `encodeURIComponent`. A `%` that is not
+followed by two hex digits, or bytes that are not UTF-8, is an error on
+decoding, not replaced. Piped input loses one trailing line break, so
+`echo x | jzr text url` gives `x`.
+
+`--parse` prints the scheme, host, port, user, path, fragment and each query
+parameter on its own line, in order, with duplicates and empty names kept
+and values decoded. A password in the URL shows as `***`. `--json` prints the
+same for scripts.
+
+## Timestamps
+
+```bash
+jzr timestamp                           # now
+jzr timestamp 1795236000                # Unix seconds
+jzr timestamp 1795236000000             # milliseconds, told apart by size
+jzr timestamp 2026-11-21T09:40          # a local date and time
+jzr timestamp 2026-11-21T09:40 --tz Europe/Berlin
+jzr timestamp 1795236000 --format "%d %B %Y"
+```
+
+```
+Unix seconds  1795236000
+Unix ms       1795236000000
+UTC           2026-11-21T04:40:00Z
+Local         2026-11-21T09:40:00+05:00 (Asia/Tashkent)
+Relative      2 hours ago
+```
+
+- A number of at least 100,000,000,000 is read as milliseconds, anything
+  smaller as seconds; `--unit s` or `--unit ms` decides instead. Fractions
+  are kept (`1.125` is 1125 ms), and negative numbers work as they are
+  (`jzr timestamp -86400`).
+- Dates are ISO 8601: `2026-11-21`, `2026-11-21T09:40`, with seconds,
+  fractions, `Z` or an offset such as `+05:00`. Without an offset the time is
+  local, or in the `--tz` zone. A local time that the clocks skip or show
+  twice when they change is an error that says so, instead of being moved.
+- `--tz` takes IANA names (`Europe/Berlin`, `America/New_York`); `--utc` is
+  `--tz UTC`. On Windows the local zone is shown with the name Windows gives
+  it, such as `West Asia Standard Time`.
+- `--format` uses Python's `strftime`. Platform extras such as `%-d` work on
+  Linux and macOS but not on Windows.
+- `--json` prints `seconds`, `milliseconds`, `utc`, `local` and `zone`.
 
 ## Renaming files
 

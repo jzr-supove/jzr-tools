@@ -33,6 +33,10 @@ _COMMANDS: dict[str, tuple[str, str]] = {
         "Pick random numbers or items, or shuffle a list.",
     ),
     "hash": ("jzr_tools.commands.hashing:hash_command", "Hash files or text (SHA-256 by default)."),
+    "timestamp": (
+        "jzr_tools.commands.timestamp:timestamp_command",
+        "Convert between Unix time and dates.",
+    ),
     "port": ("jzr_tools.commands.network:app", "Inspect and free local ports."),
     "host": ("jzr_tools.commands.host:app", "Inspect and clean up this machine."),
     "bind": ("jzr_tools.commands.bind:app", "Save your own shortcuts for long commands."),

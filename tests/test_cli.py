@@ -57,7 +57,8 @@ class CliTests(unittest.TestCase):
             sorted(listed),
             [
                 "audio", "bind", "completion", "ffmpeg", "file", "hash", "host", "image",
-                "killport", "password", "port", "random", "text", "uuid", "version", "video",
+                "killport", "password", "port", "random", "text", "timestamp", "uuid", "version",
+                "video",
             ],
         )
 

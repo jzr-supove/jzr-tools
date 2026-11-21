@@ -21,7 +21,7 @@ SRC_PATH = PROJECT_ROOT / "src"
 
 LAZY_NAMES = {
     "image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg", "completion", "file",
-    "uuid", "password", "random", "hash",
+    "uuid", "password", "random", "hash", "timestamp",
 }
 BOX_CHARS = ("╭", "│", "╰", "─")
 
@@ -142,6 +142,7 @@ class NoTyperTests(unittest.TestCase):
         self.assertIn("click", names)
         self.assertIn("psutil", names)
         self.assertIn("questionary", names)
+        self.assertIn("tzdata", names)
 
     def test_app_is_a_click_group(self) -> None:
         import click
@@ -393,6 +394,7 @@ class RegistryTests(unittest.TestCase):
                 "password": "jzr_tools.commands.generate:password_command",
                 "random": "jzr_tools.commands.generate:random_group",
                 "hash": "jzr_tools.commands.hashing:hash_command",
+                "timestamp": "jzr_tools.commands.timestamp:timestamp_command",
             },
         )
 
@@ -899,6 +901,74 @@ class GenerateStartupTests(_ObservedTestCase):
                 obs = self.run_cli(*args)
                 self.assert_ok(obs)
                 self.assert_not_loaded(obs, GENERATE_MODULES)
+
+
+TIMESTAMP_MODULES = ["jzr_tools.core.timestamp", "jzr_tools.commands.timestamp", "zoneinfo", "tzdata"]
+ENCODING_MODULES = ["jzr_tools.core.encoding"]
+
+
+class TimestampStartupTests(_ObservedTestCase):
+    def test_root_help_lists_timestamp_with_its_help(self) -> None:
+        obs = self.run_cli("--help")
+        self.assert_ok(obs)
+        self.assertRegex(
+            obs.stdout, r"(?m)^  timestamp\s+Convert between Unix time and dates\."
+        )
+
+    def test_registry_entry_points_at_the_command_with_its_help(self) -> None:
+        sys.path.insert(0, str(SRC_PATH))
+        try:
+            cli = importlib.import_module("jzr_tools.cli")
+        finally:
+            sys.path.remove(str(SRC_PATH))
+        self.assertEqual(
+            cli.app.lazy_commands["timestamp"],
+            (
+                "jzr_tools.commands.timestamp:timestamp_command",
+                "Convert between Unix time and dates.",
+            ),
+        )
+
+    def test_timestamp_help_lists_its_options_and_loads_no_zone_data(self) -> None:
+        obs = self.run_cli("timestamp", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        for option in ("--unit", "--tz", "--utc", "--format", "--json"):
+            self.assertIn(option, obs.stdout)
+        self.assert_not_loaded(obs, HEAVY_MODULES + ["zoneinfo", "tzdata"])
+        self.assert_not_loaded(obs, ["jzr_tools.core.timestamp"])
+
+    def test_text_base64_and_url_help_load_nothing_heavy(self) -> None:
+        for args in (["text", "base64", "-h"], ["text", "url", "-h"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
+                self.assert_not_loaded(
+                    obs, HEAVY_MODULES + ["zoneinfo", "tzdata"] + ENCODING_MODULES
+                )
+                self.assert_not_loaded(obs, ["jzr_tools.core.timestamp"])
+
+    def test_text_group_help_lists_base64_and_url(self) -> None:
+        obs = self.run_cli("text", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("base64", listed)
+        self.assertIn("url", listed)
+        self.assert_not_loaded(obs, ENCODING_MODULES)
+
+    def test_other_calls_never_load_the_timestamp_code_or_zone_data(self) -> None:
+        for args in (["--version"], ["--help"], ["text", "slug", "x"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, TIMESTAMP_MODULES)
+
+    def test_running_timestamp_loads_zone_support(self) -> None:
+        obs = self.run_cli("timestamp", "0", "--utc")
+        self.assert_ok(obs)
+        self.assertIn("Unix seconds  0", obs.stdout)
+        self.assertTrue(obs.loaded("zoneinfo"), obs.describe())
 
 
 if __name__ == "__main__":
