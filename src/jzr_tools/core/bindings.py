@@ -180,6 +180,136 @@ def _split_windows(line: str) -> list[str]:
     return words
 
 
+class MissingArguments(BindingError):
+    """A binding was run with fewer arguments than its placeholders need."""
+
+    def __init__(self, needed: int, given: int) -> None:
+        self.needed = needed
+        self.given = given
+        noun = "argument" if needed == 1 else "arguments"
+        super().__init__(f"needs {needed} {noun} (got {given})")
+
+
+# One token per match: an escaped placeholder, a placeholder, or a number
+# with a leading zero, which is refused. Every other brace is plain text.
+_TOKEN = re.compile(r"\{\{([0-9]+|\*)\}\}|\{([1-9][0-9]*|\*)\}|\{(0[0-9]*)\}")
+
+
+def _placeholders(word: str) -> list[str]:
+    """Return the placeholders in ``word`` as written inside the braces."""
+    found: list[str] = []
+    for match in _TOKEN.finditer(word):
+        if match.group(3) is not None:
+            raise BindingError(f"{{{match.group(3)}}} is not a placeholder; they start at {{1}}.")
+        if match.group(2) is not None:
+            found.append(match.group(2))
+    return found
+
+
+def placeholder_signature(words: Sequence[str]) -> tuple[int, bool]:
+    """Return the highest ``{N}`` a command uses and whether it uses ``{*}``.
+
+    Raises BindingError when a placeholder is malformed.
+    """
+    numbers: set[int] = set()
+    stars = 0
+    for word in words:
+        for inside in _placeholders(word):
+            if inside == "*":
+                if word != "{*}":
+                    raise BindingError("{*} must be a word on its own.")
+                stars += 1
+                if stars > 1:
+                    raise BindingError("{*} must be a word on its own.")
+            else:
+                numbers.add(int(inside))
+    highest = max(numbers, default=0)
+    for number in range(1, highest + 1):
+        if number not in numbers:
+            above = min(n for n in numbers if n > number)
+            raise BindingError(
+                f"{{{above}}} is used but {{{number}}} is not; number the arguments from {{1}}."
+            )
+    return highest, stars == 1
+
+
+def check_placeholders(words: Sequence[str]) -> None:
+    """Raise BindingError if a command's placeholders are malformed."""
+    placeholder_signature(words)
+
+
+def arity_note(words: Sequence[str]) -> str:
+    """Say how many arguments a command takes; empty without placeholders."""
+    highest, rest = placeholder_signature(words)
+    if highest == 0:
+        return "takes any arguments" if rest else ""
+    note = f"takes {highest} argument" + ("" if highest == 1 else "s")
+    return note + " and more" if rest else note
+
+
+def has_placeholder(word: str) -> bool:
+    """Return whether ``word`` holds a placeholder (escapes do not count)."""
+    return any(match.group(2) is not None for match in _TOKEN.finditer(word))
+
+
+def fill(words: Sequence[str], arguments: Sequence[str]) -> list[str]:
+    """Put the arguments a binding is run with into its command.
+
+    ``{N}`` becomes the N-th argument, inside its word and as one piece.
+    ``{*}`` becomes the arguments after the highest N, one word each; without
+    it they go on the end. ``{{N}}`` and ``{{*}}`` are the plain text.
+    """
+    highest, rest = placeholder_signature(words)
+    if len(arguments) < highest:
+        raise MissingArguments(highest, len(arguments))
+    remaining = list(arguments[highest:])
+
+    def replace(match: re.Match[str]) -> str:
+        if match.group(1) is not None:
+            return "{" + match.group(1) + "}"
+        return arguments[int(match.group(2)) - 1]
+
+    filled: list[str] = []
+    for word in words:
+        if word == "{*}":
+            filled.extend(remaining)
+        else:
+            filled.append(_TOKEN.sub(replace, word))
+    if not rest:
+        filled.extend(remaining)
+    return filled
+
+
+_PWSH_TAIL = ["-inputformat", "xml", "-outputformat", "text"]
+
+
+def powershell_script_block(words: Sequence[str]) -> str | None:
+    """Return the text of a script block PowerShell passed in place of a word.
+
+    PowerShell hands an unquoted ``{1}`` to a program as
+    ``-encodedCommand <base64> ... -inputFormat xml -outputFormat text``.
+    The block's text is given back in braces, or ``{...}`` when the base64
+    does not decode; None when the words show no such thing.
+    """
+    import base64
+    import binascii
+
+    lowered = [word.lower() for word in words]
+    for index, word in enumerate(lowered):
+        if word != "-encodedcommand":
+            continue
+        after = lowered[index + 1 :]
+        tail = any(after[at : at + 4] == _PWSH_TAIL for at in range(len(after) - 3))
+        if not tail:
+            continue
+        try:
+            text = base64.b64decode(words[index + 1], validate=True).decode("utf-16-le")
+        except (IndexError, binascii.Error, UnicodeDecodeError, ValueError):
+            return "{...}"
+        return "{" + text + "}"
+    return None
+
+
 def describe(arguments: Sequence[str]) -> str:
     """Write a command as one line, quoted so that it reads back the same."""
     if _windows():

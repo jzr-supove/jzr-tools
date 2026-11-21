@@ -41,8 +41,14 @@ def _built_in() -> set[str]:
     return set(root.list_commands(click.get_current_context()))
 
 
-def _run(name: str, arguments: list[str]) -> NoReturn:
-    """Run a binding and exit with the program's own exit code."""
+def _run(name: str, stored: list[str], extra: tuple[str, ...]) -> NoReturn:
+    """Fill in a binding's placeholders, run it and exit with its exit code."""
+    try:
+        arguments = bindings.fill(stored, extra)
+    except bindings.MissingArguments as exc:
+        _fail(f"{name} {exc}: {bindings.describe(stored)}", 2)
+    except bindings.BindingError as exc:
+        _fail(f"{name}: {exc}")
     try:
         code = bindings.run(arguments)
     except bindings.ProgramNotFound as exc:
@@ -64,7 +70,7 @@ def command_for(name: str) -> click.Command | None:
     @click.command(name, context_settings=_PASS_THROUGH, add_help_option=False)
     @click.argument("extra", nargs=-1, type=click.UNPROCESSED)
     def bound(extra: tuple[str, ...]) -> None:
-        _run(name, [*stored, *extra])
+        _run(name, stored, extra)
 
     return bound
 
@@ -78,6 +84,8 @@ def add(force: bool, name: str, command: tuple[str, ...]) -> None:
 
     COMMAND is everything after NAME, written out or as one quoted string.
     It is run directly, without a shell: no pipes, `&&` or variables.
+    Write {1}, {2}, ... where the words given when it runs belong, and {*}
+    for the rest of them; without {*}, the rest go on the end.
     """
     if not bindings.is_valid_name(name):
         raise click.UsageError(
@@ -86,8 +94,15 @@ def add(force: bool, name: str, command: tuple[str, ...]) -> None:
         )
     if name in _built_in():
         raise click.UsageError(f"'{name}' is a jzr command and cannot be rebound.")
+    block = bindings.powershell_script_block(command)
+    if block is not None:
+        raise click.UsageError(
+            f"PowerShell turned {block} into a script block. Quote it ('{block}'), "
+            "or give the whole command as one quoted string."
+        )
     try:
         words = bindings.split_command(command)
+        note = bindings.arity_note(words)
     except bindings.BindingError as exc:
         raise click.UsageError(str(exc)) from exc
     if not words:
@@ -103,8 +118,9 @@ def add(force: bool, name: str, command: tuple[str, ...]) -> None:
     found[name] = words
     bindings.save(found)
 
-    click.echo(f"{'Replaced' if replacing else 'Bound'} {name}: {bindings.describe(words)}")
-    if shutil.which(words[0]) is None:
+    suffix = f" ({note})" if note else ""
+    click.echo(f"{'Replaced' if replacing else 'Bound'} {name}: {bindings.describe(words)}{suffix}")
+    if not bindings.has_placeholder(words[0]) and shutil.which(words[0]) is None:
         click.echo(f"note: '{words[0]}' is not on PATH right now.", err=True)
 
 
@@ -161,7 +177,7 @@ def run(name: str, arguments: tuple[str, ...]) -> None:
     stored = _load().get(name)
     if stored is None:
         _fail(f"No binding named {name}.")
-    _run(name, [*stored, *arguments])
+    _run(name, stored, arguments)
 
 
 @app.command()

@@ -882,6 +882,38 @@ thing:
 jzr bind add tunnel "ngrok http 5173 --url https://example.ngrok-free.dev"
 ```
 
+### Arguments in the middle
+
+Words typed after the name go on the end of the command. To put them
+somewhere else, write `{1}`, `{2}` and so on where they belong, and `{*}`
+for all the words after the highest number:
+
+```bash
+jzr bind add ci git commit -m '{1}' --no-verify
+jzr ci "fix the typo"          # git commit -m "fix the typo" --no-verify
+
+jzr bind add logs ssh web tail -n '{1}' '/var/log/{2}.log'
+jzr logs 50 nginx              # ssh web tail -n 50 /var/log/nginx.log
+
+jzr bind add lg git log '{*}' --oneline
+jzr lg -5 main                 # git log -5 main --oneline
+jzr lg                         # git log --oneline
+```
+
+- Each value goes in as one word, spaces included, and `{1}` also works
+  inside a word, as in `--message={1}`.
+- A shortcut with `{2}` needs at least two words. With fewer, nothing runs:
+  `ci needs 1 argument (got 0): git commit -m {1} --no-verify` (exit `2`).
+- Words beyond the highest number go on the end, or where `{*}` is.
+- Only `{1}`, `{2}`, ... and `{*}` are special. Other braces, as in
+  `{"a": 1}` or `find -exec ... {}`, stay as they are. `{{1}}` is the plain
+  text `{1}`.
+- In PowerShell, quote the placeholders (`'{1}'`) or give the whole command
+  as one quoted string. Unquoted, PowerShell turns `{1}` into a script
+  block, and `jzr bind add` refuses what it receives and says so.
+
+### Other commands and details
+
 Other commands: `jzr bind add --force NAME ...` replaces an existing shortcut,
 `jzr bind run NAME` is the long way to run one, `jzr bind path` prints where
 they are stored, and `jzr bind list --json` is for scripts.
