@@ -104,6 +104,8 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr random` | Random numbers (`int`), picks (`pick`) or a shuffled list (`shuffle`) |
 | `jzr hash` | Hash files or text, or check a `SHA256SUMS` list |
 | `jzr timestamp` | Turn Unix time into dates and dates into Unix time, in any time zone |
+| `jzr data json` | Pretty-print, minify, check or rewrite JSON, changing only whitespace |
+| `jzr jwt` | Show a JWT's header, payload and times, and check an HMAC signature |
 | `jzr port show` | List listening ports and their processes, or show what uses given ports |
 | `jzr port kill` | Force-kill the processes using one or more local ports |
 | `jzr killport` | Shortcut for `jzr port kill` |
@@ -1054,6 +1056,72 @@ Relative      2 hours ago
 - `--format` uses Python's `strftime`. Platform extras such as `%-d` work on
   Linux and macOS but not on Windows.
 - `--json` prints `seconds`, `milliseconds`, `utc`, `local` and `zone`.
+
+## JSON
+
+```bash
+jzr data json response.json              # pretty-print with 2 spaces
+curl -s https://example.com/api | jzr data json
+jzr data json --minify --sort-keys a.json
+jzr data json --check *.json             # exit 1 and say where, if any is invalid
+jzr data json --write config.json        # rewrite the file in place
+python -c "print({'a': True})" | jzr data json --python
+```
+
+- Only whitespace changes. Numbers stay as written (`1.10`, `1e400` and
+  long integers are not rounded), string escapes such as `é` are not
+  decoded, and duplicate keys are kept in their order.
+- `--indent N` (0 to 8, default 2), `--tab` or `--minify` set the layout;
+  `--sort-keys` sorts every object by key.
+- An error names the input, line, column and what was expected, for example
+  `bad.json: invalid JSON at line 2 column 7: expected a value`. With several
+  files the others still run; the exit code is 1 if any failed.
+- `--write` prints `FILE: formatted` or `FILE: already formatted` and leaves
+  an already formatted file untouched. The file keeps its line endings, its
+  byte order mark and whether it ends with a newline.
+- `--python` reads a Python literal, such as a printed dict with `True`,
+  `None` and single quotes, without running it, and prints it as JSON.
+- Output always ends lines with LF, on Windows too.
+
+## JWTs
+
+```bash
+jzr jwt eyJhbGciOiJIUzI1NiIs...
+jzr jwt "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+jzr jwt --secret-env JWT_SECRET eyJhbGciOiJIUzI1NiIs...
+jzr jwt --require-valid --json < token.txt
+```
+
+```
+Header
+{
+  "alg": "HS256",
+  "typ": "JWT"
+}
+
+Payload
+{
+  "sub": "123",
+  "exp": 1795348800
+}
+
+exp  2026-11-22T12:00:00Z (in 1 day)   not expired
+iat  not present
+nbf  not present
+```
+
+- Decoding only shows what the token says; it proves nothing. Without a
+  secret, jzr says on stderr that the signature was not checked.
+- To check an HS256, HS384 or HS512 signature, give the secret with
+  `--secret-env NAME` or `--secret-file FILE` (one final line break is
+  dropped), never on the command line. jzr then prints `signature valid`
+  or `signature INVALID`; an invalid signature exits 1. Tokens signed with
+  `none`, RSA or EC keys, or with `crit` header parameters, are not checked.
+- `exp` counts as expired from the second it names. `--require-valid` exits
+  1 when the token is expired, not yet valid (`nbf`) or has an invalid
+  signature, and says which.
+- `--json` prints the header, payload, each time claim and the signature
+  result. The token and the secret never appear in error messages.
 
 ## Renaming files
 

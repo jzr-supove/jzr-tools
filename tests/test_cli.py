@@ -56,9 +56,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             sorted(listed),
             [
-                "audio", "bind", "completion", "ffmpeg", "file", "hash", "host", "image",
-                "killport", "password", "port", "random", "text", "timestamp", "uuid", "version",
-                "video",
+                "audio", "bind", "completion", "data", "ffmpeg", "file", "hash", "host", "image",
+                "jwt", "killport", "password", "port", "random", "text", "timestamp", "uuid",
+                "version", "video",
             ],
         )
 

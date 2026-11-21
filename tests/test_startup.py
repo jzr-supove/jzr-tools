@@ -21,7 +21,7 @@ SRC_PATH = PROJECT_ROOT / "src"
 
 LAZY_NAMES = {
     "image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg", "completion", "file",
-    "uuid", "password", "random", "hash", "timestamp",
+    "uuid", "password", "random", "hash", "timestamp", "data", "jwt",
 }
 BOX_CHARS = ("╭", "│", "╰", "─")
 
@@ -395,6 +395,8 @@ class RegistryTests(unittest.TestCase):
                 "random": "jzr_tools.commands.generate:random_group",
                 "hash": "jzr_tools.commands.hashing:hash_command",
                 "timestamp": "jzr_tools.commands.timestamp:timestamp_command",
+                "data": "jzr_tools.commands.data:app",
+                "jwt": "jzr_tools.commands.jwt:jwt_command",
             },
         )
 
@@ -969,6 +971,83 @@ class TimestampStartupTests(_ObservedTestCase):
         self.assert_ok(obs)
         self.assertIn("Unix seconds  0", obs.stdout)
         self.assertTrue(obs.loaded("zoneinfo"), obs.describe())
+
+
+DATA_JWT_MODULES = [
+    "hmac",
+    "zoneinfo",
+    "jzr_tools.core.jsonfmt",
+    "jzr_tools.core.jwt",
+    "jzr_tools.commands.data",
+    "jzr_tools.commands.jwt",
+]
+
+
+class DataAndJwtStartupTests(_ObservedTestCase):
+    def test_root_help_lists_data_and_jwt_with_their_help(self) -> None:
+        obs = self.run_cli("--help")
+        self.assert_ok(obs)
+        self.assertRegex(obs.stdout, r"(?m)^  data\s+Format and check JSON data\.")
+        self.assertRegex(
+            obs.stdout,
+            r"(?m)^  jwt\s+Decode a JWT and check its times and HMAC signature\.",
+        )
+
+    def test_registry_entries_point_at_the_commands_with_their_help(self) -> None:
+        sys.path.insert(0, str(SRC_PATH))
+        try:
+            cli = importlib.import_module("jzr_tools.cli")
+        finally:
+            sys.path.remove(str(SRC_PATH))
+        self.assertEqual(
+            cli.app.lazy_commands["data"],
+            ("jzr_tools.commands.data:app", "Format and check JSON data."),
+        )
+        self.assertEqual(
+            cli.app.lazy_commands["jwt"],
+            (
+                "jzr_tools.commands.jwt:jwt_command",
+                "Decode a JWT and check its times and HMAC signature.",
+            ),
+        )
+
+    def test_help_loads_no_heavy_or_command_specific_module(self) -> None:
+        for args in (["data", "-h"], ["data", "json", "-h"], ["jwt", "-h"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
+                self.assert_not_loaded(obs, HEAVY_MODULES + DATA_JWT_MODULES[:4])
+
+    def test_data_help_lists_json(self) -> None:
+        obs = self.run_cli("data", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertEqual(listed, ["json"])
+
+    def test_json_help_lists_its_options(self) -> None:
+        obs = self.run_cli("data", "json", "-h")
+        self.assert_ok(obs)
+        for option in ("--indent", "--tab", "--minify", "--sort-keys", "--check", "--write", "--python"):
+            self.assertIn(option, obs.stdout)
+
+    def test_jwt_help_lists_its_options(self) -> None:
+        obs = self.run_cli("jwt", "-h")
+        self.assert_ok(obs)
+        for option in ("--secret-env", "--secret-file", "--require-valid", "--json"):
+            self.assertIn(option, obs.stdout)
+
+    def test_version_and_help_never_load_the_data_or_jwt_code(self) -> None:
+        for args in (["--version"], ["--help"], ["text", "slug", "x"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, DATA_JWT_MODULES)
+
+    def test_running_jwt_loads_its_core_module(self) -> None:
+        obs = self.run_cli("jwt", "a.b.c")
+        self.assertEqual(obs.exit_code, "1", obs.describe())
+        self.assertTrue(obs.loaded("jzr_tools.core.jwt"), obs.describe())
 
 
 if __name__ == "__main__":
