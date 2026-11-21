@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = PROJECT_ROOT / "src"
 
 LAZY_NAMES = {
-    "image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg", "completion",
+    "image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg", "completion", "file",
 }
 BOX_CHARS = ("╭", "│", "╰", "─")
 
@@ -387,6 +387,7 @@ class RegistryTests(unittest.TestCase):
                 "video": "jzr_tools.commands.video:app",
                 "audio": "jzr_tools.commands.audio:app",
                 "completion": "jzr_tools.commands.completion:app",
+                "file": "jzr_tools.commands.file:app",
             },
         )
 
@@ -810,6 +811,36 @@ class CompletionStartupTests(_ObservedTestCase):
                 obs = self.run_cli(*args)
                 self.assert_ok(obs)
                 self.assert_not_loaded(obs, ["jzr_tools.commands.completion"])
+
+
+RENAME_MODULES = ["jzr_tools.core.rename", "jzr_tools.commands.file"]
+
+
+class FileRenameStartupTests(_ObservedTestCase):
+    def test_root_help_lists_file_with_its_help(self) -> None:
+        obs = self.run_cli("--help")
+        self.assert_ok(obs)
+        self.assertRegex(obs.stdout, r"(?m)^  file\s+Rename and organise files\.")
+
+    def test_group_help_lists_rename(self) -> None:
+        obs = self.run_cli("file", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("rename", listed)
+
+    def test_rename_help_exits_zero_and_loads_no_heavy_or_media_module(self) -> None:
+        obs = self.run_cli("file", "rename", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        self.assertIn("--apply", obs.stdout)
+        self.assert_not_loaded(obs, HEAVY_MODULES + MEDIA_MODULES)
+
+    def test_other_calls_never_load_the_rename_code(self) -> None:
+        for args in (["--version"], ["--help"], ["text", "slug", "x"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, RENAME_MODULES)
 
 
 if __name__ == "__main__":

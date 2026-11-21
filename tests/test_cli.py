@@ -55,7 +55,7 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(
             sorted(listed),
-            ["audio", "bind", "completion", "ffmpeg", "host", "image", "killport", "port", "text", "version", "video"],
+            ["audio", "bind", "completion", "ffmpeg", "file", "host", "image", "killport", "port", "text", "version", "video"],
         )
 
     def test_host_help_lists_status_clean_and_procs(self) -> None:
