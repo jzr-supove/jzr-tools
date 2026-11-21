@@ -747,16 +747,106 @@ class AudioCopyTests(unittest.TestCase):
         self.assertEqual(
             plan,
             TrimPlan(
-                input_args=("-ss", "3"),
+                input_args=("-ss", "2.976"),
                 args=(
-                    "-map", "0:a:0", "-map_metadata", "0", "-t", "5",
+                    "-map", "0:a:0", "-map_metadata", "0", "-t", "5.024",
                     "-c:a", "copy", "-copypriorss:a", "0",
                     "-id3v2_version", "3",
                 ),
-                duration=5.0,
+                duration=5.024,
                 note="audio copied",
             ),
         )
+
+    def test_mp3_seeks_one_frame_early_so_the_decoder_warms_up_before_the_start(self) -> None:
+        plan = plan_audio_trim(audio_info(sound("mp3", 0), duration=20), "mp3", TrimRange(3, 8))
+        self.assertEqual(plan.input_args, ("-ss", "2.976"))
+        self.assertEqual(plan.args[plan.args.index("-t") + 1], "5.024")
+        self.assertAlmostEqual(plan.duration, 5.024, places=6)
+
+    def test_mpeg2_mp3_below_32_khz_seeks_576_samples_early(self) -> None:
+        stream = dataclasses.replace(sound("mp3", 0), sample_rate=22050)
+        plan = plan_audio_trim(audio_info(stream), "mp3", TrimRange(3, 8))
+        # 576 / 22050 = 0.026122 s
+        self.assertEqual(plan.input_args, ("-ss", "2.973878"))
+        self.assertEqual(plan.args[plan.args.index("-t") + 1], "5.026122")
+        self.assertAlmostEqual(plan.duration, 5.026122, places=6)
+
+    def test_mp3_at_32_khz_still_uses_a_full_frame(self) -> None:
+        stream = dataclasses.replace(sound("mp3", 0), sample_rate=32000)
+        plan = plan_audio_trim(audio_info(stream), "mp3", TrimRange(3, 8))
+        # 1152 / 32000 = 0.036 s
+        self.assertEqual(plan.input_args, ("-ss", "2.964"))
+        self.assertEqual(plan.args[plan.args.index("-t") + 1], "5.036")
+
+    def test_an_unknown_sample_rate_is_taken_as_44100(self) -> None:
+        stream = dataclasses.replace(sound("mp3", 0), sample_rate=None)
+        plan = plan_audio_trim(audio_info(stream), "mp3", TrimRange(3, 8))
+        # 1152 / 44100 = 0.026122 s
+        self.assertEqual(plan.input_args, ("-ss", "2.973878"))
+        self.assertEqual(plan.args[plan.args.index("-t") + 1], "5.026122")
+
+    def test_a_start_inside_the_first_frame_has_no_seek_but_keeps_the_end(self) -> None:
+        plan = plan_audio_trim(audio_info(duration=20), "mp3", TrimRange(0.01, 5.01))
+        self.assertEqual(plan.input_args, ())
+        self.assertEqual(plan.args[plan.args.index("-t") + 1], "5.01")
+        self.assertAlmostEqual(plan.duration, 5.01, places=6)
+        # The start is still not zero, so the packets before it are dropped.
+        self.assertIn("-copypriorss:a", plan.args)
+
+    def test_a_copy_to_the_end_of_the_file_measures_its_length_from_the_seek(self) -> None:
+        plan = plan_audio_trim(audio_info(duration=20), "mp3", TrimRange(5, None))
+        self.assertEqual(plan.input_args, ("-ss", "4.976"))
+        self.assertNotIn("-t", plan.args)
+        self.assertAlmostEqual(plan.duration, 15.024, places=6)
+
+    def test_an_unknown_duration_to_the_end_still_has_no_progress_length(self) -> None:
+        plan = plan_audio_trim(audio_info(duration=None), "mp3", TrimRange(5, None))
+        self.assertEqual(plan.input_args, ("-ss", "4.976"))
+        self.assertIsNone(plan.duration)
+
+    def test_vorbis_seeks_1024_samples_early(self) -> None:
+        info = audio_info(sound("vorbis", 0), container="ogg")
+        plan = plan_audio_trim(info, "ogg", TrimRange(3, 8))
+        self.assertEqual(plan.input_args, ("-ss", "2.978667"))
+        self.assertEqual(plan.args[plan.args.index("-t") + 1], "5.021333")
+        self.assertAlmostEqual(plan.duration, 5.021333, places=6)
+        self.assertIn("-copypriorss:a", plan.args)
+
+    def test_vorbis_from_the_start_has_no_seek_and_the_plain_length(self) -> None:
+        info = audio_info(sound("vorbis", 0), container="ogg")
+        plan = plan_audio_trim(info, "ogg", TrimRange(0, 5))
+        self.assertEqual(plan.input_args, ())
+        self.assertEqual(plan.args[plan.args.index("-t") + 1], "5")
+        self.assertNotIn("-copypriorss:a", plan.args)
+        self.assertEqual(plan.duration, 5.0)
+
+    def test_aac_and_opus_copies_still_seek_to_the_start_itself(self) -> None:
+        for codec, ext, container in (("aac", "m4a", MP4_FAMILY), ("opus", "opus", "ogg")):
+            with self.subTest(codec=codec):
+                info = audio_info(sound(codec, 0), container=container)
+                plan = plan_audio_trim(info, ext, TrimRange(3, 8))
+                self.assertEqual(plan.input_args, ("-ss", "3"))
+                self.assertEqual(plan.args[plan.args.index("-t") + 1], "5")
+                self.assertEqual(plan.duration, 5.0)
+                self.assertIn("-copypriorss:a", plan.args)
+
+    def test_an_exact_mp3_or_vorbis_cut_seeks_to_the_start_itself(self) -> None:
+        for codec, ext, container in (("mp3", "mp3", "mp3"), ("vorbis", "ogg", "ogg")):
+            with self.subTest(codec=codec):
+                info = audio_info(sound(codec, 0), container=container)
+                plan = plan_audio_trim(info, ext, TrimRange(3, 8), exact=True)
+                self.assertEqual(plan.input_args, ("-ss", "3"))
+                self.assertEqual(plan.args[plan.args.index("-t") + 1], "5")
+                self.assertEqual(plan.duration, 5.0)
+
+    def test_lossless_cuts_seek_to_the_start_itself(self) -> None:
+        for codec, ext in (("flac", "flac"), ("pcm_s16le", "wav")):
+            with self.subTest(codec=codec):
+                info = audio_info(sound(codec, 0), container=ext)
+                plan = plan_audio_trim(info, ext, TrimRange(3, 8))
+                self.assertEqual(plan.input_args, ("-ss", "3"))
+                self.assertEqual(plan.duration, 5.0)
 
     def test_mp3_from_the_start_has_no_seek_and_no_prior_sample_flag(self) -> None:
         plan = plan_audio_trim(audio_info(), "mp3", TrimRange(0, 5))
@@ -801,7 +891,7 @@ class AudioCopyTests(unittest.TestCase):
         self.assertEqual(
             plan.args,
             (
-                "-map", "0:a:0", "-map_metadata", "0:s:a:0", "-t", "5",
+                "-map", "0:a:0", "-map_metadata", "0:s:a:0", "-t", "5.021333",
                 "-c:a", "copy", "-copypriorss:a", "0",
             ),
         )
@@ -821,7 +911,8 @@ class AudioCopyTests(unittest.TestCase):
     def test_an_end_past_the_file_has_no_length_and_a_note(self) -> None:
         plan = plan_audio_trim(audio_info(duration=20), "mp3", TrimRange(5, 30))
         self.assertNotIn("-t", plan.args)
-        self.assertEqual(plan.duration, 15.0)
+        self.assertEqual(plan.input_args, ("-ss", "4.976"))
+        self.assertAlmostEqual(plan.duration, 15.024, places=6)
         self.assertEqual(plan.note, "audio copied; the file ends at 0:20.00")
 
     def test_a_start_past_the_end_fails_naming_the_duration(self) -> None:

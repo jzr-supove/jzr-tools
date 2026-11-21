@@ -8,13 +8,16 @@ cut landed can be found by measuring where the tone starts in the result.
 
 from __future__ import annotations
 
+import array
 import json
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
+import wave
 
 from click.testing import CliRunner
 
@@ -84,20 +87,33 @@ def video_frames(path: Path) -> int:
 
 
 def tone_start(path: Path) -> float:
-    """Where the tone begins: the end of the first stretch of silence, in seconds."""
-    completed = subprocess.run(
-        [
-            shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
-            "-af", "silencedetect=noise=-30dB:d=0.2", "-f", "null", "-",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    found = re.search(r"silence_end: (-?[\d.]+)", completed.stderr)
-    if found is None:
-        raise AssertionError(f"no silence found in {path}:\n{completed.stderr}")
-    return float(found.group(1))
+    """Where the tone begins, in seconds, counted in decoded samples.
+
+    The file is decoded to 16-bit mono WAV and the first sample louder than
+    about -30 dBFS is found, so container timestamps and start offsets do not
+    matter.
+    """
+    with tempfile.TemporaryDirectory(prefix="jzr-tone-") as scratch:
+        decoded = Path(scratch) / "decoded.wav"
+        subprocess.run(
+            [
+                shutil.which("ffmpeg") or "ffmpeg", "-hide_banner", "-nostats", "-v", "error",
+                "-i", str(path), "-map", "0:a:0", "-ac", "1", "-ar", str(SAMPLE_RATE),
+                "-c:a", "pcm_s16le", str(decoded),
+            ],
+            capture_output=True,
+            check=True,
+        )
+        with wave.open(str(decoded), "rb") as handle:
+            frames = handle.readframes(handle.getnframes())
+    samples = array.array("h")
+    samples.frombytes(frames)
+    if sys.byteorder == "big":
+        samples.byteswap()
+    for index, value in enumerate(samples):
+        if abs(value) > 1000:
+            return index / SAMPLE_RATE
+    raise AssertionError(f"no tone found in {path}")
 
 
 def encoders() -> str:
@@ -430,18 +446,23 @@ class RealTrimTests(unittest.TestCase):
         for name, codec in (
             ("song.mp3", "mp3"), ("song.m4a", "aac"), ("song.ogg", "vorbis"), ("song.opus", "opus"),
         ):
-            with self.subTest(name=name):
-                source = self.stage(name)
-                out_dir = self.work / f"out-{source.suffix.lstrip('.')}"
-                result = self.ok("audio", source, "--start", "2", "--end", "6", "--outdir", out_dir)
-                out = out_dir / f"{source.stem}_trim{source.suffix}"
-                self.assertIn("(audio copied)", result.stdout)
-                self.assertEqual(stream_of(out, "audio")["codec_name"], codec)
-                expected = tone_start(source) - 2
-                self.assertAlmostEqual(tone_start(out), expected, delta=0.03)
-                self.assertAlmostEqual(float(ffprobe(out)["format"]["duration"]), 4.0, delta=0.1)
-                self.assertEqual(tags(out).get("title"), "Song")
-                self.assertEqual(tags(out).get("artist"), "Band")
+            source = self.stage(name)
+            source_tone = tone_start(source)
+            for start in (2.0, 2.02, 2.04, 2.07):
+                with self.subTest(name=name, start=start):
+                    out_dir = self.work / f"out-{source.suffix.lstrip('.')}-{start}"
+                    result = self.ok(
+                        "audio", source, "--start", start, "--end", start + 4, "--outdir", out_dir
+                    )
+                    out = out_dir / f"{source.stem}_trim{source.suffix}"
+                    self.assertIn("(audio copied)", result.stdout)
+                    self.assertEqual(stream_of(out, "audio")["codec_name"], codec)
+                    self.assertAlmostEqual(tone_start(out), source_tone - start, delta=0.03)
+                    self.assertAlmostEqual(
+                        float(ffprobe(out)["format"]["duration"]), 4.0, delta=0.1
+                    )
+                    self.assertEqual(tags(out).get("title"), "Song")
+                    self.assertEqual(tags(out).get("artist"), "Band")
 
     def test_an_mp3_and_an_m4a_with_cover_art_keep_it(self) -> None:
         for name in ("covered.mp3", "covered.m4a"):

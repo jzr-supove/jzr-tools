@@ -266,6 +266,23 @@ def _exact_bitrate(codec: str, bitrate: int | None) -> int | None:
     return min(high, max(low, rate))
 
 
+# A copied MP3 or Vorbis cut loses its first packet: the decoder needs it to
+# warm up (MP3 borrows bits from earlier frames, Vorbis blocks overlap). The
+# cut therefore starts one packet before the asked start, in samples.
+_WARM_UP_SAMPLES = {"mp3": 1152, "vorbis": 1024}
+
+
+def _warm_up_seek(start: float, codec: str, sample_rate: int | None) -> float:
+    """Return where a copied cut has to seek so its sound begins at ``start``."""
+    rate = sample_rate or 44100
+    samples = _WARM_UP_SAMPLES[codec]
+    if codec == "mp3" and rate < 32000:
+        samples = 576  # MPEG-2 and 2.5 frames hold half as many samples
+    seek = start - samples / rate
+    # Below a microsecond ffmpeg would be told "-ss 0"; start at the beginning.
+    return seek if seek >= 0.0000005 else 0.0
+
+
 def plan_audio_trim(
     info: MediaInfo, target_ext: str, rng: TrimRange, *, exact: bool = False
 ) -> TrimPlan:
@@ -278,6 +295,14 @@ def plan_audio_trim(
     stream = info.audio[0]
     length, range_notes = fit_range(info, rng)
     ogg = "ogg" in _container_names(info)
+    codec = stream.codec or ""
+
+    seek = rng.start
+    if not exact and rng.start > 0 and codec in _WARM_UP_SAMPLES:
+        seek = _warm_up_seek(rng.start, codec, stream.sample_rate)
+        if length is not None:
+            # The end stays where it was asked.
+            length += rng.start - seek
 
     args: list[str] = ["-map", "0:a:0"]
     if info.cover_art and target in _COVER_TARGETS:
@@ -285,7 +310,6 @@ def plan_audio_trim(
     args += ["-map_metadata", "0:s:a:0" if ogg else "0"]
     args += _length(length)
 
-    codec = stream.codec or ""
     caveat: str | None = None
     if codec == "flac" or codec.startswith("pcm_"):
         if codec == "flac":
@@ -329,8 +353,8 @@ def plan_audio_trim(
 
     duration = length
     if duration is None and info.duration is not None:
-        duration = info.duration - rng.start
-    return TrimPlan(_seek(rng.start), tuple(args), duration, "; ".join(notes), copy_cover)
+        duration = info.duration - seek
+    return TrimPlan(_seek(seek), tuple(args), duration, "; ".join(notes), copy_cover)
 
 
 Planner = Callable[[MediaInfo, "float | None"], TrimPlan]

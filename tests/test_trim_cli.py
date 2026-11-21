@@ -579,8 +579,11 @@ class AudioTrimTests(TrimCase):
         plan = plan_of(call)
         self.assertTrue(has_pair(plan, "-c:a", "copy"), plan)
         self.assertNotIn("libmp3lame", plan)
-        self.assertEqual(value_after(before_input(call), "-ss"), "2")
-        self.assertEqual(value_after(plan, "-t"), "4")
+        # An MP3 copy seeks one frame (1152 samples at 44.1 kHz) before the
+        # start, so the decoder has warmed up when the asked start plays;
+        # the length grows by the same and the end stays at 6.
+        self.assertEqual(value_after(before_input(call), "-ss"), "1.973878")
+        self.assertEqual(value_after(plan, "-t"), "4.026122")
         self.assertIn(f"{song} -> {self.dir / 'song_trim.mp3'} (audio copied)", result.stdout)
 
     def test_exact_encodes_a_lossy_file_again(self) -> None:
