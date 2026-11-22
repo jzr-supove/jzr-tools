@@ -13,13 +13,13 @@ The list shows no options. Before using one, run `jzr <group> <command> -h`, or 
 
 <!-- commands:start -->
 ### image ([reference/image.md](reference/image.md))
-- `jzr image compress` - Make image files smaller.
+- `jzr image compress` - Make image files smaller, optionally to a target size.
 - `jzr image convert` - Convert images to another format.
 - `jzr image formats` - Show supported extensions and the conversion engines available.
 - `jzr image info` - Show the format, size, colour profile and metadata of images.
 - `jzr image resize` - Make images smaller (or, with --upscale, larger).
 ### video ([reference/video.md](reference/video.md))
-- `jzr video compress` - Make video files smaller, as H.264 and AAC in MP4.
+- `jzr video compress` - Make video files smaller, optionally to a target size.
 - `jzr video convert` - Convert video files to another container, or to audio.
 - `jzr video formats` - Show the target formats, the ffmpeg in use and its encoders.
 - `jzr video gif` - Make animated GIFs from video files.

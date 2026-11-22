@@ -976,14 +976,14 @@ class HelpTests(unittest.TestCase):
         result = runner.invoke(app, ["image", "-h"])
         self.assertEqual(result.exit_code, 0, result.output)
         commands = result.stdout.split("Commands:", 1)[1]
-        self.assertRegex(commands, r"(?m)^  compress\s+Make image files smaller\.")
+        self.assertRegex(commands, r"(?m)^  compress\s+Make image files smaller, optionally to a target size\.")
 
     def test_help_has_the_command_text_and_the_option_texts(self) -> None:
         result = runner.invoke(app, ["image", "compress", "-h"])
         self.assertEqual(result.exit_code, 0, result.output)
         text = " ".join(result.stdout.split())
         for expected in (
-            "Make image files smaller.",
+            "Make image files smaller, optionally to a target size.",
             "Each file is re-encoded in its own format (or with --to another) and "
             "written as <name>_compressed.<ext> beside its source unless -o or --outdir "
             "says otherwise. A copy that is not smaller than its source is not kept, "

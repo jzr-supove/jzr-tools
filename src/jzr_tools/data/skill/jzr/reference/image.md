@@ -5,7 +5,7 @@
 ```text
 Usage: jzr image compress [OPTIONS] [SOURCES]...
 
-  Make image files smaller.
+  Make image files smaller, optionally to a target size.
 
   Each file is re-encoded in its own format (or with --to another) and written as
   <name>_compressed.<ext> beside its source unless -o or --outdir says otherwise. A copy

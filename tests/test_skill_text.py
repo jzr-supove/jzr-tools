@@ -255,6 +255,13 @@ class CommandMapTests(SkillTextCase):
             found.add(match.group(1))
         self.assertEqual(found, stems)
 
+    def test_the_compress_commands_say_they_can_reach_a_target_size(self) -> None:
+        lines = _text().command_map().splitlines()
+        for path in ("image compress", "video compress"):
+            with self.subTest(path=path):
+                (line,) = [line for line in lines if line.startswith(f"- `jzr {path}` ")]
+                self.assertIn("target size", line)
+
     def test_each_command_has_one_line_with_its_short_help_under_its_own_heading(self) -> None:
         by_stem: dict[str, list[str]] = {}
         for names, command, _ctx in _walk():

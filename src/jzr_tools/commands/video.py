@@ -403,14 +403,14 @@ def compress(
     overwrite: bool,
     dry_run: bool,
 ) -> None:
-    """Make video files smaller, as H.264 and AAC in MP4.
+    """Make video files smaller, optionally to a target size.
 
-    Each file is written as <name>_compressed.mp4. Without --size it is
-    encoded at constant quality, at most 1080p, and a result that is not
-    smaller than its source is not kept. With --size (or --for) it is
-    encoded in two passes to come out at or under that size, at the highest
-    resolution the size allows; a size that cannot work is refused before
-    encoding, with the smallest size that would.
+    Each file is written as <name>_compressed.mp4, with H.264 and AAC.
+    Without --size it is encoded at constant quality, at most 1080p, and a
+    result that is not smaller than its source is not kept. With --size (or
+    --for) it is encoded in two passes to come out at or under that size, at
+    the highest resolution the size allows; a size that cannot work is
+    refused before encoding, with the smallest size that would.
     """
     import shlex
 
