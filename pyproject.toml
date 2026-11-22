@@ -56,6 +56,10 @@ dependencies = [
   "tzdata>=2024.1",
 ]
 
+[project.optional-dependencies]
+# Only for `jzr agent mcp`: the SDK brings a web server stack with it.
+mcp = ["mcp>=2.3,<3.0"]
+
 [project.urls]
 Homepage = "https://github.com/jzr-supove/jzr-tools"
 Source = "https://github.com/jzr-supove/jzr-tools"

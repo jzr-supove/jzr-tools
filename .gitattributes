@@ -3,3 +3,5 @@
 *.sh text eol=lf
 # Packaged data is read byte for byte; keep it identical on every platform.
 src/jzr_tools/data/*.txt text eol=lf
+# The skill is compared with the commands and installed as it is.
+src/jzr_tools/data/skill/** text eol=lf

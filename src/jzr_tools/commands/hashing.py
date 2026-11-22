@@ -23,6 +23,7 @@ _ALGORITHMS = ("md5", "sha1", "sha256", "sha384", "sha512", "sha3-256", "sha3-51
     type=click.Choice(_ALGORITHMS, case_sensitive=False),
     default="sha256",
     show_default=True,
+    help="Which hash to compute.",
 )
 @click.option("--expect", default=None, metavar="HEX", help="Say OK or MISMATCH for one input.")
 @click.option(

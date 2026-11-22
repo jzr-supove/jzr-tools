@@ -62,8 +62,10 @@ jobs:
           python-version: ${{ matrix.python }}
           enable-cache: true
 
+      # The MCP server is an optional extra: one Python version tests it, the
+      # others test that jzr works without it.
       - name: Install the project
-        run: uv sync --locked
+        run: uv sync --locked ${{ matrix.python == '3.13' && '--extra mcp' || '' }}
 
       # -v names each test in the log. If the suite runs past 20 minutes,
       # faulthandler prints every thread's stack and exits, so a hang shows
@@ -71,7 +73,7 @@ jobs:
       - name: Run the tests
         shell: bash
         run: >-
-          uv run --locked python -c "import faulthandler, unittest;
+          uv run --no-sync python -c "import faulthandler, unittest;
           faulthandler.dump_traceback_later(1200, exit=True);
           unittest.main(module=None, argv=['unittest', 'discover', '-s', 'tests', '-v'])"
 

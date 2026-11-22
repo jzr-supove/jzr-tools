@@ -122,6 +122,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr bind list` | List your shortcuts |
 | `jzr bind remove` | Remove shortcuts |
 | `jzr completion` | Set up tab completion for bash, zsh, fish or PowerShell, or print its script |
+| `jzr agent` | Let AI agents use jzr: a skill for Claude Code, Codex and Cursor, or an MCP server |
 | `jzr version` | Print the installed toolkit version |
 
 ## Image Conversion
@@ -1428,6 +1429,73 @@ Open a new shell afterwards. File arguments fall back to the shell's own path
 completion. Your `jzr bind` shortcuts are not completed. Windows PowerShell 5.1
 does not offer completions for a bare `-` or `--`; type the first letter of
 the option.
+
+## Using jzr from AI agents
+
+Agents that can run commands need only the skill. The MCP server is for programs
+without a shell, such as Claude Desktop.
+
+### Skill
+
+```
+jzr agent install
+```
+
+installs a skill: a short guide that tells an AI agent which jzr command does a
+job, so it runs `jzr` instead of writing its own script. Agents keep only its
+name and description in mind until a task needs it.
+
+| Agent | Where the skill goes |
+|---|---|
+| Claude Code | `~/.claude/skills/jzr` |
+| Codex | `~/.agents/skills/jzr` |
+| Cursor | Reads either; alone, it gets `~/.agents/skills/jzr` |
+
+- It is installed for every agent whose folder (`~/.claude`, `~/.codex` or
+  `~/.cursor`) exists. `--agent claude` or `--agent codex` picks one, found or
+  not.
+- `--project` uses the current folder instead: `.claude/skills/jzr`, or
+  `.agents/skills/jzr` with `--agent codex`.
+- A copy that you changed, that a newer jzr installed, or that jzr did not
+  install is left alone unless you add `--overwrite`. `--dry-run` only shows
+  what would happen.
+- After upgrading jzr, run `jzr agent install` again.
+- `jzr agent remove` takes the skill out again, and `jzr agent skill` prints it
+  (`--path`: its folder in the package).
+
+The guide tells agents to leave `jzr host clean`, `jzr host procs --kill` and
+`jzr ffmpeg install` to you, and to ask before they change your setup.
+
+### MCP server
+
+The server needs an extra that is not installed by default:
+
+```
+uv tool install "jzr-tools[mcp]"      # or: pipx install "jzr-tools[mcp]"
+jzr agent install --mcp
+```
+
+`--mcp` installs the skill as above, registers the server with Claude Code for
+all your projects (when `claude` is on PATH), and prints the entry to add to
+Claude Desktop: open Settings > Developer > Edit Config, paste it and restart
+the app. jzr does not edit that file itself. Any other MCP client can start the
+server with `jzr agent mcp`, which talks over stdin and stdout.
+`jzr agent remove --mcp` takes it out of Claude Code again.
+
+| Tools | What they can do |
+|---|---|
+| Read only | `image_info`, `video_info`, `audio_info`, `audio_tags`, `hash`, `data_json`, `text_diff`, `file_rename` (a preview), `port_show`, `host_status` and others: look and answer, change nothing |
+| New files only | `image_compress`, `image_convert`, `image_resize`, `video_compress`, `video_convert`, `video_trim`, `video_gif`, `audio_convert`, `audio_trim`: have no `--overwrite`, so a file that exists is skipped |
+| Destructive | `file_rename_apply`, `audio_tags_edit`, `port_kill`: marked as such, so a client can ask you first |
+
+- The options of a command are the arguments of its tool: `--max-side` is
+  `max_side`. Relative paths count from the folder the client started the server
+  in, so agents are told to use absolute paths.
+- One tool runs at a time. A long encode keeps the others waiting, and a client
+  may stop waiting for it; run big jobs in a shell.
+- A result longer than 20,000 characters is cut at a line and says so.
+- `jzr host clean`, `jzr ffmpeg install` and `remove`, `jzr bind` and
+  `jzr completion` are not offered, and `host_procs` cannot end anything.
 
 ## Contributing
 

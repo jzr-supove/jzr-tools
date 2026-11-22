@@ -18,7 +18,8 @@ uv run python -m unittest discover -s tests
 
 The tests use `unittest`, not pytest. Tests that need ffmpeg and ffprobe
 skip themselves when those are not on your `PATH`; install ffmpeg to run
-them too. CI runs the suite on Windows, Linux and macOS with Python 3.11 to
+them too. The MCP server's own tests need `uv sync --extra mcp` and are
+skipped without it. CI runs the suite on Windows, Linux and macOS with Python 3.11 to
 3.14, so a change that works on one platform only shows up there.
 
 ## How the code is laid out
@@ -63,6 +64,16 @@ A new group takes three steps:
    The help text there must equal the group's own short help. It is repeated
    so that `jzr --help` can list commands without importing them.
 3. Add the group's name to `LAZY_NAMES` in `tests/test_startup.py`.
+
+Every new command is also described to AI agents, and tests fail until it is:
+
+1. Add examples to `src/jzr_tools/commands/_skill_examples.py`.
+2. In `src/jzr_tools/commands/_mcp_tools.py`, put it in `EXPOSED` (the MCP
+   server offers it) or in `NOT_EXPOSED` with the reason. Every option that is
+   offered needs help text.
+3. Run `uv run python -m jzr_tools.commands._skill_text` to update the files
+   under `src/jzr_tools/data/skill/`; never edit its `reference/` files by hand.
+   Run it again whenever a command's help changes.
 
 ## Keep start-up fast
 

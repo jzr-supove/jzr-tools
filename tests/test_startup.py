@@ -21,7 +21,7 @@ SRC_PATH = PROJECT_ROOT / "src"
 
 LAZY_NAMES = {
     "image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg", "completion", "file",
-    "uuid", "password", "random", "hash", "timestamp", "data", "jwt", "env",
+    "uuid", "password", "random", "hash", "timestamp", "data", "jwt", "env", "agent",
 }
 BOX_CHARS = ("╭", "│", "╰", "─")
 
@@ -103,11 +103,12 @@ class _ObservedTestCase(unittest.TestCase):
 
 class NoTyperTests(unittest.TestCase):
     def test_package_import_pulls_in_neither_typer_nor_rich(self) -> None:
+        # _mcp_server needs the optional mcp package.
         code = (
             "import importlib, json, pkgutil, sys\n"
             "import jzr_tools\n"
             "for m in pkgutil.walk_packages(jzr_tools.__path__, 'jzr_tools.'):\n"
-            "    if m.name.endswith('__main__'):\n"
+            "    if m.name.endswith(('__main__', '._mcp_server')):\n"
             "        continue\n"
             "    importlib.import_module(m.name)\n"
             "print('@@MODULES@@' + ','.join(sorted(sys.modules)))\n"
@@ -426,6 +427,7 @@ class RegistryTests(unittest.TestCase):
                 "data": "jzr_tools.commands.data:app",
                 "jwt": "jzr_tools.commands.jwt:jwt_command",
                 "env": "jzr_tools.commands.env:app",
+                "agent": "jzr_tools.commands.agent:app",
             },
         )
 
@@ -1208,6 +1210,127 @@ class ImageCompressStartupTests(_ObservedTestCase):
         listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
         self.assertIn("compress", listed)
         self.assert_not_loaded(obs, ["PIL", "pillow_heif"])
+
+
+SKILL_TEXT_MODULES = [
+    "jzr_tools.commands._skill_text",
+    "jzr_tools.commands._skill_examples",
+    "jzr_tools.core.skill",
+]
+OTHER_COMMAND_MODULES = [
+    "jzr_tools.commands." + name
+    for name in (
+        "image", "video", "audio", "ffmpeg", "file", "text", "generate", "hashing",
+        "timestamp", "data", "env", "jwt", "network", "host", "host_clean",
+        "host_procs", "bind", "completion",
+    )
+]
+
+
+MCP_MODULES = [
+    "mcp",
+    "mcp_types",
+    "jzr_tools.commands._mcp_tools",
+    "jzr_tools.commands._mcp_server",
+    "jzr_tools.commands._tree",
+]
+
+
+class AgentStartupTests(_ObservedTestCase):
+    def test_registry_entry_points_at_the_group_with_its_help(self) -> None:
+        sys.path.insert(0, str(SRC_PATH))
+        try:
+            cli = importlib.import_module("jzr_tools.cli")
+        finally:
+            sys.path.remove(str(SRC_PATH))
+        self.assertEqual(
+            cli.app.lazy_commands["agent"],
+            ("jzr_tools.commands.agent:app", "Connect jzr to AI agents (skill and MCP server)."),
+        )
+
+    def test_root_help_lists_agent_with_its_help(self) -> None:
+        obs = self.run_cli("--help")
+        self.assert_ok(obs)
+        self.assertRegex(obs.stdout, r"(?m)^  agent\s+Connect jzr to AI agents \(skill and MCP server\)\.")
+
+    def test_agent_comes_after_completion_and_before_killport_in_the_listing(self) -> None:
+        obs = self.run_cli("--help")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertLess(listed.index("completion"), listed.index("agent"))
+        self.assertLess(listed.index("agent"), listed.index("killport"))
+
+    def test_group_help_lists_skill_install_and_remove_and_loads_no_skill_code(self) -> None:
+        obs = self.run_cli("agent", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertEqual(sorted(listed), ["install", "mcp", "remove", "skill"])
+        self.assert_not_loaded(obs, SKILL_TEXT_MODULES + HEAVY_MODULES + MCP_MODULES)
+        self.assert_no_prefix_loaded(obs, ["mcp."])
+
+    def test_install_help_lists_its_options_and_never_loads_the_text_generator(self) -> None:
+        obs = self.run_cli("agent", "install", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        for option in ("--agent", "--project", "--overwrite", "--dry-run"):
+            self.assertIn(option, obs.stdout)
+        self.assert_not_loaded(
+            obs,
+            ["jzr_tools.commands._skill_text", "jzr_tools.commands._skill_examples"] + HEAVY_MODULES,
+        )
+
+    def test_skill_prints_the_skill_without_loading_other_commands_or_the_generator(self) -> None:
+        obs = self.run_cli("agent", "skill")
+        self.assert_ok(obs)
+        self.assertTrue(obs.stdout.startswith("---"), obs.describe())
+        self.assertIn("name: jzr", obs.stdout)
+        self.assert_not_loaded(
+            obs,
+            OTHER_COMMAND_MODULES
+            + ["jzr_tools.commands._skill_text", "jzr_tools.commands._skill_examples"]
+            + HEAVY_MODULES
+            + MCP_MODULES,
+        )
+
+    def test_other_calls_never_load_the_agent_or_skill_code(self) -> None:
+        for args in (["--version"], ["--help"], ["text", "slug", "x"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, ["jzr_tools.commands.agent"] + SKILL_TEXT_MODULES)
+
+
+    def test_install_help_lists_the_mcp_option_and_loads_no_mcp_code(self) -> None:
+        for action in ("install", "remove"):
+            with self.subTest(action=action):
+                obs = self.run_cli("agent", action, "-h")
+                self.assert_ok(obs)
+                self.assertIn("--mcp", obs.stdout)
+                self.assert_not_loaded(obs, MCP_MODULES)
+                self.assert_no_prefix_loaded(obs, ["mcp."])
+
+    def test_a_dry_run_install_without_mcp_loads_no_mcp_code(self) -> None:
+        obs = self.run_cli("agent", "install", "--project", "--dry-run")
+        self.assert_ok(obs)
+        self.assertIn("would install jzr skill", obs.stdout)
+        self.assert_not_loaded(obs, MCP_MODULES)
+        self.assert_no_prefix_loaded(obs, ["mcp."])
+
+    def test_the_mcp_help_loads_neither_the_sdk_nor_the_server_code(self) -> None:
+        obs = self.run_cli("agent", "mcp", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        self.assert_not_loaded(obs, ["mcp", "mcp_types", "jzr_tools.commands._mcp_server"])
+        self.assert_no_prefix_loaded(obs, ["mcp."])
+
+    def test_ordinary_calls_never_load_the_mcp_or_tree_code(self) -> None:
+        for args in (["--version"], ["--help"], ["text", "slug", "x"], ["hash", "-t", "x"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, MCP_MODULES + ["jzr_tools.core.mcp_setup"])
+                self.assert_no_prefix_loaded(obs, ["mcp."])
 
 
 if __name__ == "__main__":
