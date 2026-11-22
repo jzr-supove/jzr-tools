@@ -434,9 +434,14 @@ class StdioProcessTests(ServerCase):
             self.assertEqual(small.size, (8, 8))
         self.assertIn("fötö ünï", text_of(result))
 
-    def test_port_show_with_json_returns_structured_content(self) -> None:
+    def test_image_info_with_json_returns_structured_content(self) -> None:
+        from PIL import Image
+
+        source = self.root / "small.png"
+        Image.new("RGB", (16, 8), (10, 120, 200)).save(source)
+
         async def body(client):  # noqa: ANN001, ANN202
-            return await client.call_tool("port_show", {"json": True, "ports": [1]})
+            return await client.call_tool("image_info", {"json": True, "files": [str(source)]})
 
         result = self.over_stdio(body)
 

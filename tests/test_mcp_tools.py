@@ -2385,11 +2385,26 @@ class ReadOnlyToolTests(FolderCase):
         self.assertIn("unknown argument 'color'", result.text)
 
     def test_port_show_as_json_is_a_list(self) -> None:
-        result = self.call("port_show", {"ports": [1], "json": True})
+        from jzr_tools.core.network import PortOwner
+
+        # macOS lists other processes' sockets only for root.
+        owner = PortOwner(pid=42, name="demo", protocol="tcp", address="127.0.0.1", port=1, status="LISTEN")
+        with mock.patch("jzr_tools.commands.network.list_port_owners", return_value=[owner]):
+            result = self.call("port_show", {"ports": [1], "json": True})
 
         self.assertFalse(result.is_error, result.text)
         self.assertIsInstance(result.data, list)
+        self.assertEqual([row["pid"] for row in result.data], [42])
         self.assertEqual(json.loads(result.text), result.data)
+
+    def test_port_show_without_permission_passes_the_message_on_and_has_no_data(self) -> None:
+        denied = RuntimeError("Cannot inspect network ports.")
+        with mock.patch("jzr_tools.commands.network.list_port_owners", side_effect=denied):
+            result = self.call("port_show", {"ports": [1], "json": True})
+
+        self.assertIn("Cannot inspect network ports.", result.text)
+        self.assertIn("[exit code 1]", result.text)
+        self.assertIsNone(result.data)
 
     def test_host_procs_lists_processes_and_cannot_kill(self) -> None:
         ran: list[object] = []
