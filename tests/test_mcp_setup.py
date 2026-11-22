@@ -355,6 +355,11 @@ class UnregisterTests(unittest.TestCase):
 
                 self.assertEqual(self.unregister(run).status, "absent")
 
+    def test_the_message_of_claude_2_1_is_absent_too(self) -> None:
+        run = FakeRun(1, err='No MCP server named "jzr" in user scope\n')
+
+        self.assertEqual(self.unregister(run).status, "absent")
+
     def test_another_failure_reports_the_last_output_line(self) -> None:
         run = FakeRun(1, err="warming up\ncannot write config\n")
 

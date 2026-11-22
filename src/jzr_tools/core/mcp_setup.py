@@ -95,7 +95,9 @@ def unregister(
     code, output = _run(remove_command(claude), run)
     if code == 0:
         return Registration("removed")
-    if code is not None and "no " in output.lower() and "found" in output.lower():
+    # The wording differs between versions of claude.
+    said = output.lower()
+    if code is not None and ("no mcp server" in said or ("no " in said and "found" in said)):
         return Registration("absent")
     return Registration("failed", _last_line(output))
 
