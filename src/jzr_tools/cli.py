@@ -20,7 +20,7 @@ from jzr_tools import __version__
 # The help is repeated here so listing commands does not import them; a test
 # keeps it equal to each command's own short help.
 _COMMANDS: dict[str, tuple[str, str]] = {
-    "image": ("jzr_tools.commands.image:app", "Convert images between formats."),
+    "image": ("jzr_tools.commands.image:app", "Convert, compress, resize and inspect images."),
     "video": ("jzr_tools.commands.video:app", "Work with video files."),
     "audio": ("jzr_tools.commands.audio:app", "Work with audio files."),
     "ffmpeg": ("jzr_tools.commands.ffmpeg:app", "Install and check the ffmpeg jzr uses."),

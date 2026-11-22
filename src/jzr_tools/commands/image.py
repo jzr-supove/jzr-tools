@@ -5,6 +5,9 @@
 * ``jzr image png2jpg ...`` is shorthand for ``convert --from png --to jpg``.
   Any ``<from>2<to>`` pair is resolved on demand, so every supported format
   pair works without being registered up front.
+* ``jzr image info FILES...`` shows the format, size and metadata of images.
+* ``jzr image resize [SOURCES]... --width 1600`` writes resized copies.
+* ``jzr image compress [SOURCES]...`` writes smaller copies.
 """
 
 from __future__ import annotations
@@ -27,11 +30,13 @@ from jzr_tools.core.images import (
     BACKENDS,
     SUPPORTED_EXTENSIONS,
     BackendUnavailableError,
+    background_caveat,
     convert_file,
     detect_backends,
     equivalent_extensions,
     find_sources,
     normalize_extension,
+    parse_colour,
     plan_targets,
     quality_caveat,
     resolve_backend,
@@ -65,12 +70,23 @@ class ImageGroup(click.Group):
 
 @click.group(cls=ImageGroup)
 def app() -> None:
-    """Convert images between formats.
+    """Convert, compress, resize and inspect images.
 
     Besides the commands listed below, any format pair works as a command:
     'jzr image png2jpg shot.png' is short for
     'jzr image convert shot.png --from png --to jpg'.
     """
+
+
+def _background(
+    ctx: click.Context, param: click.Parameter, value: str | None
+) -> tuple[int, int, int] | None:
+    if value is None:
+        return None
+    try:
+        return parse_colour(value)
+    except ValueError as error:
+        raise click.BadParameter(str(error), ctx=ctx, param=param) from error
 
 
 _conversion_options = batch_options(
@@ -88,6 +104,13 @@ _conversion_options = batch_options(
         default="auto",
         show_default=True,
         help="Conversion engine: built-in Pillow, or ImageMagick from PATH.",
+    ),
+    click.option(
+        "--background",
+        metavar="COLOR",
+        default=None,
+        callback=_background,
+        help="Colour for transparent areas in jpg, bmp and ppm output (default white).",
     ),
 )
 
@@ -132,6 +155,7 @@ def _run(
     target_extension: str,
     *,
     quality: int | None,
+    background: tuple[int, int, int] | None,
     backend: str,
     output: Path | None,
     outdir: Path | None,
@@ -159,6 +183,10 @@ def _run(
         caveat = quality_caveat(backend_name, target_extension)
         if caveat is not None:
             click.echo(f"note: {caveat}", err=True)
+    if background is not None:
+        caveat = background_caveat(target_extension)
+        if caveat is not None:
+            click.echo(f"note: {caveat}", err=True)
 
     if output is not None:
         targets = [output]
@@ -173,6 +201,7 @@ def _run(
             backend=backend_name,
             executable=executable,
             quality=quality,
+            background=background,
             overwrite=overwrite,
             dry_run=dry_run,
         )
@@ -193,6 +222,7 @@ def _convert(
     output: Path | None,
     outdir: Path | None,
     quality: int | None,
+    background: tuple[int, int, int] | None,
     backend: str,
     overwrite: bool,
     dry_run: bool,
@@ -229,6 +259,7 @@ def _convert(
         selected,
         target_extension,
         quality=quality,
+        background=background,
         backend=backend,
         output=output,
         outdir=outdir,
@@ -306,3 +337,459 @@ def formats() -> None:
 
     magick = detect_backends().get("magick")
     click.echo(f"magick: {magick[0] if magick else 'not found'}")
+
+
+@app.command()
+@click.argument(
+    "files",
+    nargs=-1,
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option("--json", "as_json", is_flag=True, help="Print one JSON array.")
+@click.option("--no-gps", is_flag=True, help="Leave the GPS position out.")
+def info(files: tuple[Path, ...], as_json: bool, no_gps: bool) -> None:
+    """Show the format, size, colour profile and metadata of images.
+
+    GPS positions are shown so you can check a photo before sharing it;
+    --no-gps leaves them out. --json prints one array with the same facts.
+    """
+    import json
+
+    from jzr_tools.core import image_info
+    from jzr_tools.core.pillow_engine import ConversionError
+
+    documents: list[dict[str, object]] = []
+    failed = False
+    printed = False
+    for path in files:
+        try:
+            facts = image_info.read_info(path)
+        except (ConversionError, OSError) as error:
+            reason = error.strerror if isinstance(error, OSError) and error.strerror else error
+            click.echo(f"fail {path}: {reason}", err=True)
+            failed = True
+            continue
+
+        if as_json:
+            documents.append(image_info.info_as_dict(facts, gps=not no_gps))
+            continue
+
+        rows = image_info.info_rows(facts, gps=not no_gps)
+        width = max(len(label) for label, _ in rows)
+        if printed:
+            click.echo()
+        click.echo(str(path))
+        for label, value in rows:
+            click.echo(f"  {label.ljust(width)}  {value}")
+        printed = True
+
+    if as_json:
+        click.echo(json.dumps(documents, indent=2, ensure_ascii=False))
+    if failed:
+        raise click.exceptions.Exit(1)
+
+
+def _resize_notes(
+    extensions: list[str],
+    *,
+    quality: int | None,
+    background: tuple[int, int, int] | None,
+) -> None:
+    """Print each note once, for the first target extension it applies to."""
+    checks = []
+    if quality is not None:
+        checks.append(lambda extension: quality_caveat("pillow", extension))
+    if background is not None:
+        checks.append(background_caveat)
+    for check in checks:
+        for extension in extensions:
+            caveat = check(extension)
+            if caveat is not None:
+                click.echo(f"note: {caveat}", err=True)
+                break
+
+
+@app.command()
+@batch_options(
+    click.option(
+        "--width",
+        type=click.IntRange(min=1),
+        metavar="N",
+        default=None,
+        help="Width in pixels; the height follows.",
+    ),
+    click.option(
+        "--height",
+        type=click.IntRange(min=1),
+        metavar="N",
+        default=None,
+        help="Height in pixels; the width follows.",
+    ),
+    click.option(
+        "--percent",
+        type=click.FloatRange(min=0, max=1000, min_open=True),
+        metavar="P",
+        default=None,
+        help="Scale both sides by this percentage.",
+    ),
+    click.option(
+        "--max-side",
+        type=click.IntRange(min=1),
+        metavar="N",
+        default=None,
+        help="Longest side in pixels.",
+    ),
+    click.option("--upscale", is_flag=True, help="Allow making images larger."),
+    click.option(
+        "-t",
+        "--to",
+        "target",
+        default=None,
+        help="Write in this format instead of the source's.",
+    ),
+    click.option(
+        "-q",
+        "--quality",
+        type=click.IntRange(1, 100),
+        default=None,
+        help="Output quality, 1-100 (higher is better).",
+    ),
+    click.option(
+        "--strip",
+        is_flag=True,
+        help="Leave out EXIF, XMP and comments; the colour profile is kept.",
+    ),
+    click.option(
+        "--background",
+        metavar="COLOR",
+        default=None,
+        callback=_background,
+        help="Colour for transparent areas in jpg, bmp and ppm output (default white).",
+    ),
+)
+def resize(
+    sources: tuple[Path, ...],
+    directory: Path | None,
+    pattern: str | None,
+    recursive: bool,
+    output: Path | None,
+    outdir: Path | None,
+    width: int | None,
+    height: int | None,
+    percent: float | None,
+    max_side: int | None,
+    upscale: bool,
+    target: str | None,
+    quality: int | None,
+    strip: bool,
+    background: tuple[int, int, int] | None,
+    overwrite: bool,
+    dry_run: bool,
+) -> None:
+    """Make images smaller (or, with --upscale, larger).
+
+    Give one size: --width, --height, both (the image fits inside that box),
+    --percent or --max-side. Proportions are always kept. Each file is
+    written as <name>_<W>x<H>.<ext> beside its source unless -o or --outdir
+    says otherwise.
+    """
+    from jzr_tools.core import resize as resizer
+    from jzr_tools.core.batch import ConversionResult
+
+    request = resizer.SizeRequest(
+        width=width, height=height, percent=percent, max_side=max_side, upscale=upscale
+    )
+    try:
+        resizer.check_request(request)
+    except ValueError as error:
+        raise click.UsageError(f"{error}.") from error
+
+    regex = compile_pattern(pattern)
+    check_output(output, sources=sources, outdir=outdir)
+    target_extension = _supported_extension(target) if target is not None else None
+    if output is not None:
+        written = normalize_extension(output.suffix)
+        if target_extension is not None:
+            if written not in equivalent_extensions(target_extension):
+                raise click.UsageError(
+                    f"--output {output} does not end in .{target_extension}."
+                )
+        elif not written:
+            raise click.UsageError(f"--output {output} has no extension; add one or give --to.")
+        else:
+            target_extension = _supported_extension(written)
+
+    if sources:
+        if directory is not None or recursive:
+            raise click.UsageError(
+                "--dir and --recursive only apply when no SOURCES are listed."
+            )
+        selected = [_resolve_source(path, None) for path in sources]
+        if regex is not None:
+            selected = [path for path in selected if regex.search(path.name) is not None]
+        root = None
+    else:
+        root = directory if directory is not None else Path(".")
+        found = find_sources(
+            root, extensions=SUPPORTED_EXTENSIONS, pattern=regex, recursive=recursive
+        )
+        # Earlier results are not resized again.
+        selected = [path for path in found if resizer.RESIZED_STEM.search(path.stem) is None]
+
+    if not selected:
+        click.echo("No matching files.", err=True)
+        raise click.exceptions.Exit(1)
+
+    def extension_of(source: Path) -> str:
+        if target_extension is not None:
+            return target_extension
+        return source.suffix.lstrip(".")
+
+    _resize_notes(
+        [normalize_extension(extension_of(source)) for source in selected],
+        quality=quality,
+        background=background,
+    )
+
+    from jzr_tools.core import pillow_engine
+
+    # Each source becomes a plan, or the result that ends it here.
+    outcomes: list[ConversionResult | resizer.SizePlan] = []
+    for source in selected:
+        if normalize_extension(extension_of(source)) not in SUPPORTED_EXTENSIONS:
+            reason = f".{source.suffix.lstrip('.')} is not an image extension; add --to"
+            outcomes.append(ConversionResult(source, source, (), "failed", reason))
+            continue
+        try:
+            source_width, source_height, frames = pillow_engine.probe(source)
+        except pillow_engine.ConversionError as error:
+            outcomes.append(ConversionResult(source, source, (), "failed", str(error)))
+            continue
+        if frames > 1:
+            reason = pillow_engine.NOT_RESIZED_ANIMATED
+            outcomes.append(ConversionResult(source, source, (), "failed", reason))
+            continue
+        planned = resizer.plan_size(source_width, source_height, request)
+        if isinstance(planned, str):
+            outcomes.append(ConversionResult(source, source, (), "skipped", planned))
+        else:
+            outcomes.append(planned)
+
+    items = [
+        (source, outcome)
+        for source, outcome in zip(selected, outcomes)
+        if isinstance(outcome, resizer.SizePlan)
+    ]
+    if output is not None:
+        targets = iter([output] * len(items))
+    else:
+        targets = iter(
+            resizer.resize_targets(items, extension=target_extension, outdir=outdir, root=root)
+        )
+
+    counts: Counter[str] = Counter()
+    for source, outcome in zip(selected, outcomes):
+        if isinstance(outcome, resizer.SizePlan):
+            result = resizer.resize_file(
+                source,
+                next(targets),
+                outcome,
+                quality=quality,
+                background=background,
+                strip=strip,
+                overwrite=overwrite,
+                dry_run=dry_run,
+            )
+        else:
+            result = outcome
+        counts[result.status] += 1
+        report(result)
+
+    summarize("pillow", counts)
+
+
+def _size_limit(ctx: click.Context, param: click.Parameter, value: str | None) -> int | None:
+    if value is None:
+        return None
+    from jzr_tools.core.media import parse_size
+
+    try:
+        return parse_size(value)
+    except ValueError as error:
+        raise click.BadParameter(str(error), ctx=ctx, param=param) from error
+
+
+@app.command()
+@batch_options(
+    click.option(
+        "-t",
+        "--to",
+        "target",
+        type=click.Choice(["jpg", "png", "webp", "avif", "heic"], case_sensitive=False),
+        default=None,
+        help="Re-encode into this format.",
+    ),
+    click.option(
+        "-q",
+        "--quality",
+        type=click.IntRange(1, 100),
+        default=None,
+        help="Output quality, 1-100 (higher is better).",
+    ),
+    click.option(
+        "-s",
+        "--size",
+        "size_limit",
+        metavar="SIZE",
+        default=None,
+        callback=_size_limit,
+        help=(
+            "Largest file size, such as 500KB or 2MB; quality is lowered "
+            "(and the image shrunk if needed) to fit."
+        ),
+    ),
+    click.option(
+        "--max-side",
+        type=click.IntRange(min=1),
+        metavar="N",
+        default=None,
+        help="Longest side in pixels; smaller images are not enlarged.",
+    ),
+    click.option(
+        "--strip",
+        is_flag=True,
+        help="Leave out EXIF, XMP and comments; the colour profile is kept.",
+    ),
+    click.option(
+        "--background",
+        metavar="COLOR",
+        default=None,
+        callback=_background,
+        help="Colour for transparent areas in jpg output (default white).",
+    ),
+)
+def compress(
+    sources: tuple[Path, ...],
+    directory: Path | None,
+    pattern: str | None,
+    recursive: bool,
+    output: Path | None,
+    outdir: Path | None,
+    target: str | None,
+    quality: int | None,
+    size_limit: int | None,
+    max_side: int | None,
+    strip: bool,
+    background: tuple[int, int, int] | None,
+    overwrite: bool,
+    dry_run: bool,
+) -> None:
+    """Make image files smaller.
+
+    Each file is re-encoded in its own format (or with --to another) and
+    written as <name>_compressed.<ext> beside its source unless -o or
+    --outdir says otherwise. A copy that is not smaller than its source is
+    not kept, unless --to changes the format.
+    """
+    from jzr_tools.core import image_compress as compressor
+    from jzr_tools.core.batch import ConversionResult
+
+    if quality is not None and size_limit is not None:
+        raise click.UsageError("--quality and --size cannot be used together.")
+
+    regex = compile_pattern(pattern)
+    check_output(output, sources=sources, outdir=outdir)
+    target_extension = target.lower() if target is not None else None
+
+    if sources:
+        if directory is not None or recursive:
+            raise click.UsageError(
+                "--dir and --recursive only apply when no SOURCES are listed."
+            )
+        selected = [_resolve_source(path, None) for path in sources]
+        if regex is not None:
+            selected = [path for path in selected if regex.search(path.name) is not None]
+        root = None
+    else:
+        root = directory if directory is not None else Path(".")
+        extensions = SUPPORTED_EXTENSIONS if target_extension is not None else compressor.COMPRESSIBLE
+        found = find_sources(root, extensions=extensions, pattern=regex, recursive=recursive)
+        # Earlier results are not compressed again.
+        selected = [path for path in found if not path.stem.endswith(compressor.COMPRESSED_STEM)]
+
+    if output is not None:
+        written = output.suffix.lstrip(".")
+        if target_extension is not None:
+            if normalize_extension(written) not in equivalent_extensions(target_extension):
+                raise click.UsageError(
+                    f"--output {output} does not end in .{target_extension}."
+                )
+        elif written:
+            own = selected[0].suffix if selected else ""
+            if not (
+                normalize_extension(written) in compressor.TARGETS
+                or compressor.same_format(written, own)
+            ):
+                raise click.UsageError(
+                    f"--output {output}: .{written.lower()} is not a compress format; "
+                    "use jpg, png, webp, avif or heic."
+                )
+            if not compressor.same_format(written, own):
+                target_extension = normalize_extension(written)
+
+    if not selected:
+        click.echo("No matching files.", err=True)
+        raise click.exceptions.Exit(1)
+
+    def extension_of(source: Path) -> str:
+        if target_extension is not None:
+            return target_extension
+        return source.suffix.lstrip(".")
+
+    # Each source becomes the result that ends it here, or None to compress.
+    outcomes: list[ConversionResult | None] = []
+    for source in selected:
+        reason = compressor.not_compressible(extension_of(source))
+        if reason is None:
+            outcomes.append(None)
+        else:
+            reason = compressor.not_compressible(source.suffix) or reason
+            outcomes.append(ConversionResult(source, source, (), "failed", reason))
+
+    planned = [source for source, outcome in zip(selected, outcomes) if outcome is None]
+    if output is not None:
+        targets = iter([output] * len(planned))
+    else:
+        targets = iter(
+            compressor.compress_targets(
+                planned, extension=target_extension, outdir=outdir, root=root
+            )
+        )
+
+    _resize_notes(
+        [normalize_extension(extension_of(source)) for source in planned],
+        quality=quality,
+        background=background,
+    )
+
+    counts: Counter[str] = Counter()
+    for source, outcome in zip(selected, outcomes):
+        if outcome is None:
+            result = compressor.compress_file(
+                source,
+                next(targets),
+                quality=quality,
+                size_limit=size_limit,
+                max_side=max_side,
+                background=background,
+                strip=strip,
+                overwrite=overwrite,
+                dry_run=dry_run,
+            )
+        else:
+            result = outcome
+        counts[result.status] += 1
+        report(result)
+
+    summarize("pillow", counts)

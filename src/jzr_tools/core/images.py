@@ -52,6 +52,19 @@ LOSSY_EXTENSIONS = frozenset({"avif", "heic", "heif", "jpeg", "jpg", "webp"})
 # Targets that can hold more than one frame; any other target gets the first.
 ANIMATED_EXTENSIONS = frozenset({"avif", "gif", "webp"})
 
+# Targets with no way to store transparency: transparent areas are filled.
+OPAQUE_EXTENSIONS = frozenset({"bmp", "jpeg", "jpg", "ppm"})
+
+_TIFF_EXTENSIONS = frozenset({"tif", "tiff"})
+
+_COLOUR_NAMES = {
+    "white": (255, 255, 255),
+    "black": (0, 0, 0),
+    "grey": (128, 128, 128),
+    "gray": (128, 128, 128),
+}
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+
 # Spellings of the same format, so `jzr image jpeg2png` also picks up `.jpg`.
 _EXTENSION_ALIASES = (
     frozenset({"jpg", "jpeg"}),
@@ -145,6 +158,26 @@ def quality_caveat(backend: str, target_extension: str) -> str | None:
     return f"{backend} ignores --quality for .{extension} output"
 
 
+def parse_colour(value: str) -> tuple[int, int, int]:
+    """Read ``#rgb``, ``#rrggbb`` or one of a few colour names as RGB."""
+    named = _COLOUR_NAMES.get(value.strip().lower())
+    if named is not None:
+        return named
+    digits = value[1:]
+    if value.startswith("#") and len(digits) in {3, 6} and set(digits) <= _HEX_DIGITS:
+        if len(digits) == 3:
+            digits = "".join(digit * 2 for digit in digits)
+        return (int(digits[0:2], 16), int(digits[2:4], 16), int(digits[4:6], 16))
+    raise ValueError(f"'{value}' is not a colour; use #rrggbb, #rgb, white, black or grey")
+
+
+def background_caveat(target_extension: str) -> str | None:
+    """Explain that ``--background`` does nothing for a target that keeps transparency."""
+    if normalize_extension(target_extension) in OPAQUE_EXTENSIONS:
+        return None
+    return f".{target_extension.lstrip('.')} keeps transparency; --background is ignored"
+
+
 def build_command(
     backend: str,
     executable: list[str],
@@ -153,11 +186,13 @@ def build_command(
     *,
     quality: int | None = None,
     overwrite: bool = True,
+    background: tuple[int, int, int] | None = None,
 ) -> list[str]:
     """Build the ImageMagick argv used to convert ``source`` into ``target``.
 
     ``overwrite`` changes nothing here: ImageMagick always replaces its output,
-    so ``convert_file`` decides whether to run at all.
+    so ``convert_file`` decides whether to run at all. ``background`` fills
+    transparent areas, for targets that cannot keep them.
     """
     if backend != "magick":
         raise ValueError(f"Unknown backend: {backend}")
@@ -179,8 +214,20 @@ def build_command(
         # a selector is always read literally, so the other frames are dropped
         # after reading instead.
         command += [source_argument, "-delete", "1--1"]
+    if background is not None and target_extension in OPAQUE_EXTENSIONS:
+        red, green, blue = background
+        command += [
+            "-background",
+            f"#{red:02x}{green:02x}{blue:02x}",
+            "-alpha",
+            "remove",
+            "-alpha",
+            "off",
+        ]
     if quality is not None:
         command += ["-quality", str(quality)]
+    if target_extension in _TIFF_EXTENSIONS:
+        command += ["-compress", "LZW"]
     # `%d` escapes in the output path are expanded and cannot be escaped
     # portably, so `convert_file` never passes a target containing `%`.
     command.append(str(target))
@@ -239,7 +286,13 @@ def _wrong_format(produced: Path, target: Path) -> str | None:
 
 
 def _convert_with_pillow(
-    source: Path, target: Path, *, quality: int | None, overwrite: bool, dry_run: bool
+    source: Path,
+    target: Path,
+    *,
+    quality: int | None,
+    background: tuple[int, int, int] | None,
+    overwrite: bool,
+    dry_run: bool,
 ) -> ConversionResult:
     if source.resolve() == target.resolve():
         return ConversionResult(source, target, (), "skipped", "source is the target")
@@ -256,7 +309,7 @@ def _convert_with_pillow(
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        pillow_engine.convert(source, target, quality=quality)
+        pillow_engine.convert(source, target, quality=quality, background=background)
     except (pillow_engine.ConversionError, OSError) as error:
         return ConversionResult(source, target, (), "failed", str(error))
 
@@ -270,13 +323,23 @@ def convert_file(
     backend: str,
     executable: list[str],
     quality: int | None = None,
+    background: tuple[int, int, int] | None = None,
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> ConversionResult:
-    """Convert one file, returning what happened instead of raising."""
+    """Convert one file, returning what happened instead of raising.
+
+    ``background`` is the colour transparent areas get in a target that
+    cannot keep them; ``None`` means white.
+    """
     if backend == "pillow":
         return _convert_with_pillow(
-            source, target, quality=quality, overwrite=overwrite, dry_run=dry_run
+            source,
+            target,
+            quality=quality,
+            background=background,
+            overwrite=overwrite,
+            dry_run=dry_run,
         )
 
     # ImageMagick expands `%d` escapes in an output path and has no escape for
@@ -298,6 +361,7 @@ def convert_file(
                 placeholder,
                 quality=quality,
                 overwrite=overwrite,
+                background=background,
             )
         )
         produced = work_dir / placeholder
@@ -311,6 +375,7 @@ def convert_file(
                 target,
                 quality=quality,
                 overwrite=overwrite,
+                background=background,
             )
         )
         produced = target

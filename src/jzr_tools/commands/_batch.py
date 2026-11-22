@@ -23,6 +23,9 @@ if TYPE_CHECKING:
 
 Decorator = Callable[[Callable[..., None]], Callable[..., None]]
 
+# Statuses of a file that was written.
+_DONE = frozenset({"compressed", "converted", "resized"})
+
 
 def batch_options(*extra: Decorator) -> Decorator:
     """Attach SOURCES and the source/output options, with ``extra`` before
@@ -118,7 +121,7 @@ def report(result: ConversionResult) -> None:
             click.echo(f"{result.source} -> {result.target}")
         if result.detail:
             click.echo(f"note: {result.detail}", err=True)
-    elif result.status == "converted":
+    elif result.status in _DONE:
         note = f" ({result.detail})" if result.detail else ""
         click.echo(f"{result.source} -> {result.target}{note}")
     elif result.status == "skipped":

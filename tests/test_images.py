@@ -71,7 +71,8 @@ class MagickCommandTests(unittest.TestCase):
                 command = build_command(
                     "magick", MAGICK, Path("anim.gif"), Path(f"anim.{ext}")
                 )
-                self.assertEqual(command, ["magick", "anim.gif[0]", f"anim.{ext}"])
+                lzw = ["-compress", "LZW"] if ext in ("tif", "tiff") else []
+                self.assertEqual(command, ["magick", "anim.gif[0]", *lzw, f"anim.{ext}"])
 
     def test_first_frame_selector_stays_before_quality_option(self) -> None:
         command = build_command(

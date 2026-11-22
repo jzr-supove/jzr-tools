@@ -264,7 +264,8 @@ class BackendSelectionTests(TempDirTestCase):
                 result = runner.invoke(app, args)
                 self.assertEqual(result.exit_code, 0)
                 self.assertIn(
-                    "Convert images between formats.", " ".join(result.stdout.split())
+                    "Convert, compress, resize and inspect images.",
+                    " ".join(result.stdout.split()),
                 )
                 # The root listing has an `ffmpeg` group of its own; only the
                 # image text must not offer ffmpeg as an image engine.

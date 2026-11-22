@@ -207,6 +207,34 @@ class CommandLoadsOnlyItsOwnTests(_ObservedTestCase):
             ],
         )
 
+    def test_image_info_help_loads_neither_pillow_nor_the_info_reader(self) -> None:
+        obs = self.run_cli("image", "info", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        self.assert_not_loaded(obs, ["PIL", "pillow_heif", "jzr_tools.core.image_info"])
+
+    def test_image_resize_help_loads_neither_pillow_nor_pillow_heif(self) -> None:
+        obs = self.run_cli("image", "resize", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        self.assertIn("--max-side", obs.stdout)
+        self.assert_not_loaded(obs, ["PIL", "pillow_heif"])
+
+    def test_image_group_help_lists_info_and_the_new_group_text(self) -> None:
+        obs = self.run_cli("image", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Convert, compress, resize and inspect images.", " ".join(obs.stdout.split()))
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("info", listed)
+        self.assert_not_loaded(obs, ["PIL", "pillow_heif", "jzr_tools.core.image_info"])
+
+    def test_root_help_lists_image_with_the_new_group_text(self) -> None:
+        obs = self.run_cli("--help")
+        self.assert_ok(obs)
+        self.assertRegex(
+            obs.stdout, r"(?m)^  image\s+Convert, compress, resize and inspect images\."
+        )
+
     def test_host_status_json_does_not_load_image_or_text_code(self) -> None:
         obs = self.run_cli("host", "status", "--json")
         self.assert_ok(obs)
@@ -676,6 +704,9 @@ class ShortHelpFlagTests(_ObservedTestCase):
             ["image", "-h"],
             ["image", "convert", "-h"],
             ["image", "png2jpg", "-h"],
+            ["image", "info", "-h"],
+            ["image", "resize", "-h"],
+            ["image", "compress", "-h"],
             ["port", "-h"],
             ["port", "kill", "-h"],
             ["port", "show", "-h"],
@@ -1146,6 +1177,37 @@ class EnvAndTextDiffStartupTests(_ObservedTestCase):
         self.assertEqual(obs.stdout.strip(), "A=")
         self.assertTrue(obs.loaded("jzr_tools.core.envfile"), obs.describe())
         self.assert_not_loaded(obs, ["jzr_tools.core.textdiff"])
+
+
+class ImageCompressStartupTests(_ObservedTestCase):
+    def test_compress_help_loads_neither_pillow_nor_pillow_heif(self) -> None:
+        obs = self.run_cli("image", "compress", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        self.assertIn("--max-side", obs.stdout)
+        self.assertIn("--size", obs.stdout)
+        self.assert_not_loaded(obs, ["PIL", "pillow_heif"])
+
+    def test_compress_dry_run_of_a_real_file_loads_neither_pillow_nor_pillow_heif(self) -> None:
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory(prefix="jzr-startup-compress-") as folder:
+            photo = Path(folder) / "photo.jpg"
+            Image.new("RGB", (32, 32), (200, 30, 30)).save(photo)
+            obs = self.run_cli("image", "compress", "--dry-run", str(photo))
+            planned = sorted(entry.name for entry in Path(folder).iterdir())
+        self.assert_ok(obs)
+        self.assertIn(str(Path(folder) / "photo_compressed.jpg"), obs.stdout)
+        self.assertIn("pillow: 1 planned", obs.stdout)
+        self.assertEqual(planned, ["photo.jpg"])
+        self.assert_not_loaded(obs, ["PIL", "pillow_heif"])
+
+    def test_the_image_group_help_lists_compress_without_loading_pillow(self) -> None:
+        obs = self.run_cli("image", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("compress", listed)
+        self.assert_not_loaded(obs, ["PIL", "pillow_heif"])
 
 
 if __name__ == "__main__":
