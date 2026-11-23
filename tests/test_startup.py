@@ -1021,7 +1021,7 @@ class DataAndJwtStartupTests(_ObservedTestCase):
     def test_root_help_lists_data_and_jwt_with_their_help(self) -> None:
         obs = self.run_cli("--help")
         self.assert_ok(obs)
-        self.assertRegex(obs.stdout, r"(?m)^  data\s+Format and check JSON data\.")
+        self.assertRegex(obs.stdout, r"(?m)^  data\s+Format, check and convert structured data\.")
         self.assertRegex(
             obs.stdout,
             r"(?m)^  jwt\s+Decode a JWT and check its times and HMAC signature\.",
@@ -1035,7 +1035,7 @@ class DataAndJwtStartupTests(_ObservedTestCase):
             sys.path.remove(str(SRC_PATH))
         self.assertEqual(
             cli.app.lazy_commands["data"],
-            ("jzr_tools.commands.data:app", "Format and check JSON data."),
+            ("jzr_tools.commands.data:app", "Format, check and convert structured data."),
         )
         self.assertEqual(
             cli.app.lazy_commands["jwt"],
@@ -1053,11 +1053,11 @@ class DataAndJwtStartupTests(_ObservedTestCase):
                 self.assertIn("Usage:", obs.stdout)
                 self.assert_not_loaded(obs, HEAVY_MODULES + DATA_JWT_MODULES[:4])
 
-    def test_data_help_lists_json(self) -> None:
+    def test_data_help_lists_convert_and_json(self) -> None:
         obs = self.run_cli("data", "-h")
         self.assert_ok(obs)
         listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
-        self.assertEqual(listed, ["json"])
+        self.assertEqual(sorted(listed), ["convert", "json"])
 
     def test_json_help_lists_its_options(self) -> None:
         obs = self.run_cli("data", "json", "-h")
@@ -1082,6 +1082,82 @@ class DataAndJwtStartupTests(_ObservedTestCase):
         obs = self.run_cli("jwt", "a.b.c")
         self.assertEqual(obs.exit_code, "1", obs.describe())
         self.assertTrue(obs.loaded("jzr_tools.core.jwt"), obs.describe())
+
+
+CONVERT_LIBRARIES = ["yaml", "openpyxl", "tomli_w", "et_xmlfile"]
+
+
+class DataConvertStartupTests(_ObservedTestCase):
+    def test_group_help_and_convert_help_import_no_format_library(self) -> None:
+        for args in (["data", "-h"], ["data", "convert", "-h"], ["data", "convert", "--help"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
+                self.assert_not_loaded(obs, CONVERT_LIBRARIES + HEAVY_MODULES)
+                self.assert_not_loaded(obs, ["jzr_tools.core.dataconv"])
+
+    def test_convert_help_lists_its_options(self) -> None:
+        obs = self.run_cli("data", "convert", "-h")
+        self.assert_ok(obs)
+        for option in ("--from", "--to", "--output", "--delimiter", "--no-header",
+                       "--header-row", "--types", "--nest", "--sheet", "--indent",
+                       "--minify", "--overwrite"):
+            self.assertIn(option, obs.stdout)
+
+    def test_calls_that_are_not_conversions_never_load_the_conversion_code(self) -> None:
+        for args in (["--version"], ["--help"], ["text", "slug", "x"], ["data", "json", "-h"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, CONVERT_LIBRARIES + ["jzr_tools.core.dataconv"])
+
+    def _convert(self, name: str, content: bytes, *args: str) -> Observed:
+        with tempfile.TemporaryDirectory(prefix="jzr-startup-convert-") as folder:
+            source = Path(folder) / name
+            source.write_bytes(content)
+            return self.run_cli("data", "convert", str(source), *args)
+
+    def test_json_to_csv_and_json_to_json_load_no_format_library(self) -> None:
+        cases = [
+            ("a.json", b'[{"a": 1}]', ["--to", "csv"]),
+            ("a.json", b'[{"a": 1}]', ["--to", "json", "--minify"]),
+            ("a.json", b'[{"a": 1}]', ["--to", "jsonl"]),
+            ("a.csv", b"a,b\n1,2\n", ["--to", "json"]),
+            ("a.toml", b"a = 1\n", ["--to", "json"]),
+        ]
+        for name, content, args in cases:
+            with self.subTest(name=name, args=args):
+                obs = self._convert(name, content, *args)
+                self.assert_ok(obs)
+                self.assertTrue(obs.loaded("jzr_tools.core.dataconv"), obs.describe())
+                self.assert_not_loaded(obs, CONVERT_LIBRARIES)
+
+    def test_each_format_loads_only_its_own_library(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="jzr-startup-convert-") as folder:
+            data = Path(folder) / "a.json"
+            data.write_bytes(b'[{"a": 1}]')
+            table = Path(folder) / "t.json"
+            table.write_bytes(b'{"a": 1}')
+            to_yaml = self.run_cli("data", "convert", str(data), "--to", "yaml")
+            to_toml = self.run_cli("data", "convert", str(table), "--to", "toml")
+            to_xlsx = self.run_cli(
+                "data", "convert", str(data), "-o", str(Path(folder) / "out.xlsx")
+            )
+            yaml_file = Path(folder) / "a.yaml"
+            yaml_file.write_bytes(b"a: 1\n")
+            from_yaml = self.run_cli("data", "convert", str(yaml_file), "--to", "json")
+            from_xlsx = self.run_cli(
+                "data", "convert", str(Path(folder) / "out.xlsx"), "--to", "json"
+            )
+        for obs, wanted in (
+            (to_yaml, "yaml"), (to_toml, "tomli_w"), (to_xlsx, "openpyxl"),
+            (from_yaml, "yaml"), (from_xlsx, "openpyxl"),
+        ):
+            with self.subTest(wanted=wanted):
+                self.assert_ok(obs)
+                self.assertTrue(obs.loaded(wanted), obs.describe())
+                self.assert_not_loaded(obs, [m for m in ("yaml", "openpyxl", "tomli_w") if m != wanted])
 
 
 ENV_DIFF_MODULES = [

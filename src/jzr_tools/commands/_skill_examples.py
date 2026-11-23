@@ -122,6 +122,12 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         ("jzr data json --check a.json b.json", "only checks the files"),
         ("jzr data json config.json --sort-keys -w", "rewrites the file in place"),
     ),
+    "data convert": (
+        ("jzr data convert config.yaml --to json", "prints the YAML as JSON"),
+        ("jzr data convert users.json -o users.csv", "nested keys become dotted columns"),
+        ("jzr data convert report.xlsx --to json --sheet Sales", "reads one sheet"),
+        ("jzr data convert rows.csv --types --to xlsx", "numbers stay numbers; writes rows.xlsx"),
+    ),
     "env compare": (
         ("jzr env compare", "compares .env.example with .env, keys only"),
         ("jzr env compare .env.example .env.test --json", "compares two named files"),

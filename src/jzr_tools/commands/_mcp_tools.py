@@ -89,6 +89,7 @@ EXPOSED: dict[str, Exposed] = {
     "hash": _read("hash"),
     "timestamp": _read("timestamp"),
     "data_json": _read("data json", "write"),
+    "data_convert": _write("data convert"),
     "env_compare": _read("env compare"),
     "env_example": _read("env example", "output", "overwrite", "copy"),
     "jwt": _read("jwt"),
@@ -137,7 +138,7 @@ _ARGUMENT_HELP = {
 }
 
 # Commands that take file names as plain text, so "-" can mean stdin.
-_FILE_NAMES_AS_TEXT = frozenset({"data json", "env compare", "env example"})
+_FILE_NAMES_AS_TEXT = frozenset({"data convert", "data json", "env compare", "env example"})
 
 # Measured on a fast desktop with a one minute 1080p clip.
 _TIMES = {

@@ -1,6 +1,6 @@
 ---
 name: jzr
-description: Run the jzr command line for everyday file and machine jobs. Convert, compress, resize, trim or inspect images, video and audio; make GIFs; edit audio tags; rename files; free a busy port; hash files; encode, diff or slug text; format JSON; decode JWTs; convert timestamps; make UUIDs and passwords. Use it instead of writing ffmpeg commands or Pillow scripts.
+description: Run the jzr command line for everyday file and machine jobs. Convert, compress, resize, trim or inspect images, video and audio; make GIFs; edit audio tags; convert JSON, YAML, CSV, TOML and Excel data; rename files; free a port; hash files; encode, diff or slug text; read JWTs; convert timestamps; make UUIDs or passwords. Use it instead of ffmpeg or Pillow scripts.
 ---
 
 # jzr
@@ -53,6 +53,7 @@ The list shows no options. Before using one, run `jzr <group> <command> -h`, or 
 - `jzr random pick` - Pick random ITEMS; without ITEMS, the lines of stdin.
 - `jzr random shuffle` - Print ITEMS in random order; without ITEMS, the lines of stdin.
 ### data ([reference/data.md](reference/data.md))
+- `jzr data convert` - Convert data between JSON, YAML, CSV, TOML and Excel.
 - `jzr data json` - Pretty-print, minify or check JSON from FILES or stdin.
 ### env ([reference/env.md](reference/env.md))
 - `jzr env compare` - Show the keys only in A (default .env.example) or only in B (default .env).

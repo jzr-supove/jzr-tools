@@ -1,5 +1,48 @@
 # jzr data
 
+## jzr data convert
+
+```text
+Usage: jzr data convert [OPTIONS] [FILE]
+
+  Convert data between JSON, YAML, CSV, TOML and Excel.
+
+  The formats come from the file names, or from --from and --to. Text goes to stdout
+  unless -o names a file; Excel output goes to -o, or to <name>.xlsx beside FILE.
+  Anything lost on the way is named in a note on stderr.
+
+Options:
+  -f, --from [json|jsonl|yaml|csv|toml|xlsx]
+                                  Format of the input; needed for stdin.
+  -t, --to [json|jsonl|yaml|csv|toml|xlsx]
+                                  Format to write; or give -o a file name with an
+                                  extension.
+  -o, --output FILE               Write to this file instead of stdout.
+  --delimiter [,|;|tab||]         CSV delimiter: , ; tab or | (default , and tab for
+                                  .tsv).
+  --no-header                     CSV and Excel: the first row is data; rows become
+                                  arrays.
+  --header-row N                  Excel: the row with the column names (default: the
+                                  first row with data).  [x>=1]
+  --types                         CSV: read numbers, true/false and empty cells instead
+                                  of text.
+  --nest                          CSV and Excel: turn dotted column names into nested
+                                  objects.
+  --sheet NAME                    Excel: read this sheet; repeat for more (default:
+                                  every visible sheet).
+  --indent N                      JSON: indent with N spaces, 0 to 8 (default 2).
+                                  [0<=x<=8]
+  --minify                        JSON: leave out all whitespace.
+  --overwrite                     Replace an existing output file.
+```
+
+Examples:
+
+- `jzr data convert config.yaml --to json` - prints the YAML as JSON
+- `jzr data convert users.json -o users.csv` - nested keys become dotted columns
+- `jzr data convert report.xlsx --to json --sheet Sales` - reads one sheet
+- `jzr data convert rows.csv --types --to xlsx` - numbers stay numbers; writes rows.xlsx
+
 ## jzr data json
 
 ```text

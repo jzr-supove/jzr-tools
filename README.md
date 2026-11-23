@@ -109,6 +109,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr hash` | Hash files or text, or check a `SHA256SUMS` list |
 | `jzr timestamp` | Turn Unix time into dates and dates into Unix time, in any time zone |
 | `jzr data json` | Pretty-print, minify, check or rewrite JSON, changing only whitespace |
+| `jzr data convert` | Convert data between JSON, JSON Lines, YAML, CSV, TOML and Excel |
 | `jzr jwt` | Show a JWT's header, payload and times, and check an HMAC signature |
 | `jzr env example` | Turn a `.env` into a `.env.example`: the keys, without values |
 | `jzr env compare` | List the keys only one of two `.env` files has; exit 1 if any |
@@ -1233,6 +1234,45 @@ python -c "print({'a': True})" | jzr data json --python
   `None` and single quotes, without running it, and prints it as JSON.
 - Output always ends lines with LF, on Windows too.
 
+## Converting data
+
+```bash
+jzr data convert config.yaml --to json        # print to stdout
+jzr data convert users.json -o users.csv      # the format from the extension
+jzr data convert rows.csv --types --to xlsx   # rows.xlsx beside rows.csv
+jzr data convert report.xlsx --to json --sheet Sales --header-row 3
+curl -s https://example.com/api | jzr data convert --from json --to yaml
+```
+
+```text
+wrote users.csv (2 rows)
+note: arrays were written as JSON text
+```
+
+- Formats: JSON, JSON Lines (`.jsonl`, `.ndjson`), YAML, CSV (`.tsv` is
+  tab-separated), TOML and Excel (`.xlsx`, `.xlsm`). They come from the file
+  names, or from `--from` and `--to`; stdin needs `--from`. Old `.xls`,
+  `.ods` and `.xlsb` files are refused: save them as `.xlsx` first.
+- Text goes to stdout unless `-o` names a file. Excel output goes to `-o`, or
+  to `<name>.xlsx` beside the input. An existing file is only replaced with
+  `--overwrite`, and never when it is the input itself.
+- Anything that changes on the way is named in a `note:` on stderr: duplicate
+  keys (the last value is kept), keys that were not text, dates that became
+  text, YAML comments and anchors, empty cells, arrays written as text, and
+  cells that a spreadsheet might run as a formula (they are kept as written).
+- CSV and Excel: the first row holds the column names, and nested objects
+  become dotted columns (`user.name`); `--nest` turns them back into objects.
+  CSV cells stay text unless `--types` reads numbers, `true`/`false` and empty
+  cells. `--no-header` reads every row as an array.
+- YAML is read with the YAML 1.2 rules: `no` and `on` stay text, `0777` is a
+  number, dates stay text, and one document per input.
+- Excel: every visible sheet is read (`--sheet` picks sheets, also hidden
+  ones), merged cells are filled in, and a formula gives its saved value. Text
+  longer than a cell allows is cut and numbers with more than 15 digits are
+  written as text, both with a note.
+- Errors name the input and where the problem is, such as `bad.json: invalid
+  JSON at line 2 column 7: expecting value`, exit 1 and write nothing.
+
 ## JWTs
 
 ```bash
@@ -1485,7 +1525,7 @@ server with `jzr agent mcp`, which talks over stdin and stdout.
 | Tools | What they can do |
 |---|---|
 | Read only | `image_info`, `video_info`, `audio_info`, `audio_tags`, `hash`, `data_json`, `text_diff`, `file_rename` (a preview), `port_show`, `host_status` and others: look and answer, change nothing |
-| New files only | `image_compress`, `image_convert`, `image_resize`, `video_compress`, `video_convert`, `video_trim`, `video_gif`, `audio_convert`, `audio_trim`: have no `--overwrite`, so a file that exists is skipped |
+| New files only | `image_compress`, `image_convert`, `image_resize`, `data_convert`, `video_compress`, `video_convert`, `video_trim`, `video_gif`, `audio_convert`, `audio_trim`: have no `--overwrite`, so a file that exists is never replaced |
 | Destructive | `file_rename_apply`, `audio_tags_edit`, `port_kill`: marked as such, so a client can ask you first |
 
 - The options of a command are the arguments of its tool: `--max-side` is

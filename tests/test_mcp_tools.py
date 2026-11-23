@@ -87,6 +87,7 @@ EXPECTED_EXPOSED = {
     "port_show": _row("port show", "read"),
     "host_status": _row("host status", "read", ("live", "interval")),
     "host_procs": _row("host procs", "read", ("kill", "force")),
+    "data_convert": _row("data convert", "write", ("overwrite",)),
     "image_compress": _row("image compress", "write", ("overwrite",)),
     "image_convert": _row("image convert", "write", ("overwrite",)),
     "image_resize": _row("image resize", "write", ("overwrite",)),
@@ -113,7 +114,7 @@ ENCODERS = (
     "video_compress", "video_convert", "video_trim", "video_gif", "audio_convert", "audio_trim",
 )
 # Take file names as plain text, so whether they count as "path parameters" is a judgement call.
-PATH_UNDECIDED = frozenset({"data_json", "env_compare", "env_example"})
+PATH_UNDECIDED = frozenset({"data_json", "data_convert", "env_compare", "env_example"})
 
 
 # -- an independent view of the real commands ------------------------------

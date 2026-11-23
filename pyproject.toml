@@ -49,10 +49,13 @@ classifiers = [
 dependencies = [
   "click>=8.1,<9.0",
   "mutagen>=1.47,<2.0",
+  "openpyxl>=3.1,<4",
   "pillow>=11.3,<14.0",
   "pillow-heif>=1.0,<2.0",
   "psutil>=6.0,<8.0",
+  "pyyaml>=6.0,<7",
   "questionary>=2.0,<3.0",
+  "tomli-w>=1.0,<2",
   "tzdata>=2024.1",
 ]
 

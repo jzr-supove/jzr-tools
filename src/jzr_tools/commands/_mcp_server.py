@@ -24,8 +24,9 @@ from jzr_tools.commands import _mcp_tools
 _INSTRUCTIONS = (
     "jzr works on files and processes of this computer. Give absolute paths. "
     "Image, video and audio tools write new files beside their sources and name "
-    "them in the result. They never replace a file: one that exists is skipped, so "
-    "give another outdir. file_rename only previews; file_rename_apply renames. "
+    "them in the result; data_convert prints text unless given an output. "
+    "No tool replaces a file: when the target exists, give another outdir or "
+    "output. file_rename only previews; file_rename_apply renames. "
     "Ask the user before calling a tool marked destructive. When ffmpeg is missing, "
     "ask the user to run: jzr ffmpeg install"
 )

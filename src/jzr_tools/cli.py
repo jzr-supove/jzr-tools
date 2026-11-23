@@ -37,7 +37,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
         "jzr_tools.commands.timestamp:timestamp_command",
         "Convert between Unix time and dates.",
     ),
-    "data": ("jzr_tools.commands.data:app", "Format and check JSON data."),
+    "data": ("jzr_tools.commands.data:app", "Format, check and convert structured data."),
     "env": ("jzr_tools.commands.env:app", "Make .env.example files and compare .env keys."),
     "jwt": (
         "jzr_tools.commands.jwt:jwt_command",
