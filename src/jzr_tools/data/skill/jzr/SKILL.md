@@ -18,6 +18,7 @@ The list shows no options. Before using one, run `jzr <group> <command> -h`, or 
 - `jzr image formats` - Show supported extensions and the conversion engines available.
 - `jzr image info` - Show the format, size, colour profile and metadata of images.
 - `jzr image resize` - Make images smaller (or, with --upscale, larger).
+- `jzr image strip` - Remove metadata from JPEG, PNG and WebP files without re-encoding.
 ### video ([reference/video.md](reference/video.md))
 - `jzr video compress` - Make video files smaller, optionally to a target size.
 - `jzr video convert` - Convert video files to another container, or to audio.

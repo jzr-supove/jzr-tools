@@ -27,6 +27,11 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         ("jzr image resize photo.jpg --width 800 --height 600", "fits inside an 800x600 box"),
         ("jzr image resize -d photos --max-side 1600 --outdir web", "resizes every image in a folder"),
     ),
+    "image strip": (
+        ("jzr image strip photo.jpg", "writes photo_clean.jpg without EXIF, GPS or XMP"),
+        ("jzr image strip -d photos --dry-run", "shows what each file would lose"),
+        ("jzr image strip shot.png --in-place", "cleans the file itself"),
+    ),
     "video compress": (
         ("jzr video compress clip.mov", "writes clip_compressed.mp4"),
         ("jzr video compress clip.mp4 -s 25MB", "stays at or under 25 MB"),

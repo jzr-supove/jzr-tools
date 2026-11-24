@@ -8,6 +8,7 @@
 * ``jzr image info FILES...`` shows the format, size and metadata of images.
 * ``jzr image resize [SOURCES]... --width 1600`` writes resized copies.
 * ``jzr image compress [SOURCES]...`` writes smaller copies.
+* ``jzr image strip [SOURCES]...`` writes copies without metadata.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 import re
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import click
 
@@ -41,6 +42,9 @@ from jzr_tools.core.images import (
     quality_caveat,
     resolve_backend,
 )
+
+if TYPE_CHECKING:
+    from jzr_tools.core.batch import ConversionResult
 
 _PAIR_PATTERN = re.compile(r"^([a-z0-9]+)2([a-z0-9]+)$")
 
@@ -793,3 +797,101 @@ def compress(
         report(result)
 
     summarize("pillow", counts)
+
+
+def _strip_line(result: ConversionResult, *, in_place: bool) -> None:
+    """Print a cleaned or planned file on stdout; anything else through report."""
+    if result.status not in ("cleaned", "planned"):
+        report(result)
+        return
+    shown = f"{result.source}" if in_place else f"{result.source} -> {result.target}"
+    click.echo(f"{shown} ({result.detail})")
+
+
+@app.command()
+@batch_options(
+    click.option("--in-place", is_flag=True, help="Replace each source with its cleaned copy."),
+    click.option(
+        "--no-color-profile",
+        "no_color_profile",
+        is_flag=True,
+        help="Remove the colour profile too.",
+    ),
+)
+def strip(
+    sources: tuple[Path, ...],
+    directory: Path | None,
+    pattern: str | None,
+    recursive: bool,
+    output: Path | None,
+    outdir: Path | None,
+    in_place: bool,
+    no_color_profile: bool,
+    overwrite: bool,
+    dry_run: bool,
+) -> None:
+    """Remove metadata from JPEG, PNG and WebP files without re-encoding.
+
+    The image data is copied byte for byte, so quality does not change. EXIF
+    (with GPS), XMP, IPTC, comments, text chunks and data after the image are
+    removed; the orientation and the colour profile are kept. Each file is
+    written as <name>_clean.<ext> beside its source unless -o, --outdir or
+    --in-place says otherwise.
+    """
+    from jzr_tools.core import image_strip as stripper
+    from jzr_tools.core.batch import ConversionResult, _path_key
+
+    if in_place and (output is not None or outdir is not None):
+        raise click.UsageError("--in-place cannot be used with --output or --outdir.")
+    regex = compile_pattern(pattern)
+    check_output(output, sources=sources, outdir=outdir)
+
+    if sources:
+        if directory is not None or recursive:
+            raise click.UsageError(
+                "--dir and --recursive only apply when no SOURCES are listed."
+            )
+        selected = [_resolve_source(path, None) for path in sources]
+        if regex is not None:
+            selected = [path for path in selected if regex.search(path.name) is not None]
+        root = None
+    else:
+        root = directory if directory is not None else Path(".")
+        found = find_sources(
+            root, extensions=stripper.STRIPPABLE, pattern=regex, recursive=recursive
+        )
+        # Earlier results are not cleaned again, unless nothing new is named.
+        selected = (
+            found
+            if in_place
+            else [path for path in found if not path.stem.endswith(stripper.CLEAN_STEM)]
+        )
+
+    if not selected:
+        click.echo("No matching files.", err=True)
+        raise click.exceptions.Exit(1)
+
+    if in_place:
+        targets = list(selected)
+    elif output is not None:
+        targets = [output]
+    else:
+        targets = stripper.clean_targets(selected, outdir=outdir, root=root)
+
+    counts: Counter[str] = Counter()
+    for source, target in zip(selected, targets):
+        if not in_place and _path_key(source) == _path_key(target):
+            # Only --in-place may replace a source, even with --overwrite.
+            result = ConversionResult(source, target, (), "skipped", "source is the target")
+        else:
+            result = stripper.strip_file(
+                source,
+                target,
+                keep_color_profile=not no_color_profile,
+                overwrite=overwrite or in_place,
+                dry_run=dry_run,
+            )
+        counts[result.status] += 1
+        _strip_line(result, in_place=in_place)
+
+    summarize("strip", counts)

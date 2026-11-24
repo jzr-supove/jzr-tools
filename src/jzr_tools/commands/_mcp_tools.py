@@ -60,6 +60,8 @@ EXPOSED: dict[str, Exposed] = {
     "image_formats": _read("image formats"),
     "image_info": _read("image info"),
     "image_resize": _write("image resize"),
+    # --in-place replaces the sources, which no write tool may do.
+    "image_strip": Exposed("image strip", "write", frozenset({"overwrite", "in_place"})),
     "video_compress": _write("video compress"),
     "video_convert": _write("video convert"),
     "video_formats": _read("video formats"),

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 Decorator = Callable[[Callable[..., None]], Callable[..., None]]
 
 # Statuses of a file that was written.
-_DONE = frozenset({"compressed", "converted", "resized"})
+_DONE = frozenset({"cleaned", "compressed", "converted", "resized"})
 
 
 def batch_options(*extra: Decorator) -> Decorator:

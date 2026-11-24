@@ -709,6 +709,7 @@ class ShortHelpFlagTests(_ObservedTestCase):
             ["image", "info", "-h"],
             ["image", "resize", "-h"],
             ["image", "compress", "-h"],
+            ["image", "strip", "-h"],
             ["port", "-h"],
             ["port", "kill", "-h"],
             ["port", "show", "-h"],
@@ -1285,6 +1286,43 @@ class ImageCompressStartupTests(_ObservedTestCase):
         self.assert_ok(obs)
         listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
         self.assertIn("compress", listed)
+        self.assert_not_loaded(obs, ["PIL", "pillow_heif"])
+
+
+class ImageStripStartupTests(_ObservedTestCase):
+    def test_strip_help_loads_neither_pillow_nor_pillow_heif(self) -> None:
+        obs = self.run_cli("image", "strip", "-h")
+        self.assert_ok(obs)
+        self.assertIn("Usage:", obs.stdout)
+        self.assertIn("--in-place", obs.stdout)
+        self.assertIn("--no-color-profile", obs.stdout)
+        self.assert_not_loaded(obs, ["PIL", "pillow_heif"])
+
+    def test_strip_dry_run_of_a_real_file_loads_neither_pillow_nor_pillow_heif(self) -> None:
+        from tests import strip_fixtures as fx
+
+        with tempfile.TemporaryDirectory(prefix="jzr-startup-strip-") as folder:
+            photo = Path(folder) / "photo.jpg"
+            photo.write_bytes(
+                fx.build_jpeg(
+                    [fx.JFIF_CLEAN, fx.exif_app1(fx.photo_tiff(6))],
+                    fx.jpeg_body(fx.plain_jpeg()),
+                )
+            )
+            obs = self.run_cli("image", "strip", "--dry-run", str(photo))
+            planned = sorted(entry.name for entry in Path(folder).iterdir())
+        self.assert_ok(obs)
+        self.assertIn(str(Path(folder) / "photo_clean.jpg"), obs.stdout)
+        self.assertIn("would remove EXIF, GPS", obs.stdout)
+        self.assertIn("strip: 1 planned", obs.stdout)
+        self.assertEqual(planned, ["photo.jpg"])
+        self.assert_not_loaded(obs, ["PIL", "pillow_heif"])
+
+    def test_the_image_group_help_lists_strip_without_loading_pillow(self) -> None:
+        obs = self.run_cli("image", "-h")
+        self.assert_ok(obs)
+        listed = re.findall(r"^  (\S+)", obs.stdout.split("Commands:", 1)[1], flags=re.MULTILINE)
+        self.assertIn("strip", listed)
         self.assert_not_loaded(obs, ["PIL", "pillow_heif"])
 
 

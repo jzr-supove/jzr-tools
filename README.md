@@ -81,6 +81,7 @@ on. Run `jzr -h`, or `-h` after any group or command, for the details.
 | `jzr image formats` | List supported extensions and the conversion engines available |
 | `jzr image compress` | Make image files smaller, in their own format or another, optionally to a target size |
 | `jzr image resize` | Make images smaller (or larger) by width, height, percentage or longest side |
+| `jzr image strip` | Remove EXIF, GPS, XMP and other metadata from JPEG, PNG and WebP without re-encoding |
 | `jzr image info` | Show an image's format, size, colour profile, camera, date taken and GPS position |
 | `jzr video convert` | Convert video to mp4, mov, mkv or webm, take the sound out as audio, or make a GIF |
 | `jzr video <from>2<to>` | Shorthand for a format pair, e.g. `jzr video mov2mp4` |
@@ -296,6 +297,37 @@ Behavior worth knowing:
 - Animated GIFs and WebPs are not compressed; they fail alone with a message.
 - `--dry-run` does not open the files. It shows the output names, but not
   which files would be skipped as already small.
+
+### Removing metadata
+
+`jzr image strip` removes metadata from JPEG, PNG and WebP files without
+re-encoding them, so the pixels and the quality stay exactly the same:
+
+```bash
+jzr image strip photo.jpg                 # photo_clean.jpg
+jzr image strip -d ~/Photos -r --dry-run  # what each file would lose
+jzr image strip shot.png --in-place       # clean the file itself
+```
+
+```text
+photo.jpg -> photo_clean.jpg (removed EXIF, GPS, XMP; 48.2 kB smaller)
+```
+
+- Removed: EXIF (camera, dates, GPS, thumbnails), XMP, IPTC, comments, PNG
+  text chunks and timestamps, unknown blocks, and data after the end of the
+  image, such as the video of a phone's motion photo.
+- Kept: the image data, the rendering headers (gamma, sRGB, JFIF), the
+  colour profile (`--no-color-profile` removes it too) and the orientation,
+  rewritten as a block that holds nothing else.
+- Each copy is written as `<name>_clean.<ext>`, unless `-o`, `--outdir` or
+  `--in-place` says otherwise. `--in-place` replaces each source through a
+  temporary file and cannot be combined with `-o` or `--outdir`.
+- A file with nothing to remove is skipped. HEIC, AVIF, TIFF and other
+  formats fail alone; `jzr image compress --strip` handles them by
+  re-encoding.
+- Damaged files, animated PNGs and WebPs, and files whose metadata cannot be
+  read safely (so the orientation might be lost) fail and nothing is written.
+- `--dry-run` reads each file and says what would be removed.
 
 ### Image info
 
@@ -1525,7 +1557,7 @@ server with `jzr agent mcp`, which talks over stdin and stdout.
 | Tools | What they can do |
 |---|---|
 | Read only | `image_info`, `video_info`, `audio_info`, `audio_tags`, `hash`, `data_json`, `text_diff`, `file_rename` (a preview), `port_show`, `host_status` and others: look and answer, change nothing |
-| New files only | `image_compress`, `image_convert`, `image_resize`, `data_convert`, `video_compress`, `video_convert`, `video_trim`, `video_gif`, `audio_convert`, `audio_trim`: have no `--overwrite`, so a file that exists is never replaced |
+| New files only | `image_compress`, `image_convert`, `image_resize`, `image_strip` (without `--in-place`), `data_convert`, `video_compress`, `video_convert`, `video_trim`, `video_gif`, `audio_convert`, `audio_trim`: have no `--overwrite`, so a file that exists is never replaced |
 | Destructive | `file_rename_apply`, `audio_tags_edit`, `port_kill`: marked as such, so a client can ask you first |
 
 - The options of a command are the arguments of its tool: `--max-side` is

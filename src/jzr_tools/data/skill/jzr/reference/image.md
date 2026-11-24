@@ -146,3 +146,33 @@ Examples:
 - `jzr image resize photo.jpg --width 1200` - keeps the proportions
 - `jzr image resize photo.jpg --width 800 --height 600` - fits inside an 800x600 box
 - `jzr image resize -d photos --max-side 1600 --outdir web` - resizes every image in a folder
+
+## jzr image strip
+
+```text
+Usage: jzr image strip [OPTIONS] [SOURCES]...
+
+  Remove metadata from JPEG, PNG and WebP files without re-encoding.
+
+  The image data is copied byte for byte, so quality does not change. EXIF (with GPS),
+  XMP, IPTC, comments, text chunks and data after the image are removed; the orientation
+  and the colour profile are kept. Each file is written as <name>_clean.<ext> beside its
+  source unless -o, --outdir or --in-place says otherwise.
+
+Options:
+  -d, --dir DIRECTORY  Directory to scan when no SOURCES are listed.  [default: .]
+  -p, --pattern TEXT   Regex filter applied to candidate filenames.
+  -r, --recursive      Recurse into subdirectories while scanning.
+  -o, --output FILE    Write the one listed SOURCE to this file.
+  --outdir DIRECTORY   Write outputs here instead of beside each source.
+  --in-place           Replace each source with its cleaned copy.
+  --no-color-profile   Remove the colour profile too.
+  --overwrite          Replace existing output files.
+  --dry-run            Show what would be converted; write nothing.
+```
+
+Examples:
+
+- `jzr image strip photo.jpg` - writes photo_clean.jpg without EXIF, GPS or XMP
+- `jzr image strip -d photos --dry-run` - shows what each file would lose
+- `jzr image strip shot.png --in-place` - cleans the file itself

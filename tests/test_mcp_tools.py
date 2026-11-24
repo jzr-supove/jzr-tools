@@ -91,6 +91,7 @@ EXPECTED_EXPOSED = {
     "image_compress": _row("image compress", "write", ("overwrite",)),
     "image_convert": _row("image convert", "write", ("overwrite",)),
     "image_resize": _row("image resize", "write", ("overwrite",)),
+    "image_strip": _row("image strip", "write", ("overwrite", "in_place")),
     "video_compress": _row("video compress", "write", ("overwrite",)),
     "video_convert": _row("video convert", "write", ("overwrite",)),
     "video_trim": _row("video trim", "write", ("overwrite",)),
@@ -1409,8 +1410,9 @@ class ArgvErrorTests(unittest.TestCase):
         ]
         self.assertEqual(
             set(batch),
-            {"image_compress", "image_convert", "image_resize", "video_compress", "video_convert",
-             "video_trim", "video_gif", "audio_convert", "audio_trim", "file_rename", "file_rename_apply"},
+            {"image_compress", "image_convert", "image_resize", "image_strip", "video_compress",
+             "video_convert", "video_trim", "video_gif", "audio_convert", "audio_trim",
+             "file_rename", "file_rename_apply"},
         )
         for name in batch:
             for arguments in ({}, {"dir": None}, {"sources": None}, {"sources": []}, {"recursive": True}):
