@@ -9,7 +9,7 @@
   <a href="https://github.com/jzr-supove/jzr-tools/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jzr-supove/jzr-tools/ci.yml?branch=main&style=flat-square&labelColor=1c1c22&label=tests" alt="Tests"></a>
   <img src="https://img.shields.io/badge/os-Windows%20%7C%20macOS%20%7C%20Linux-3c3c46?style=flat-square&labelColor=1c1c22" alt="Windows, macOS and Linux">
   <a href="https://github.com/jzr-supove/jzr-tools/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-3c3c46?style=flat-square&labelColor=1c1c22" alt="Apache 2.0 license"></a>
-  <a href="https://github.com/jzr-supove/jzr-tools/blob/main/docs/agents.md"><img src="https://img.shields.io/badge/AI%20agents-skill%20%2B%20MCP-00ff99?style=flat-square&labelColor=1c1c22" alt="Skill and MCP server for AI agents"></a>
+  <a href="https://github.com/jzr-supove/jzr-tools/blob/main/docs/ai-agents.md"><img src="https://img.shields.io/badge/AI%20agents-skill%20%2B%20MCP-00ff99?style=flat-square&labelColor=1c1c22" alt="Skill and MCP server for AI agents"></a>
   <a href="https://jzr.tools"><img src="https://img.shields.io/badge/web-jzr.tools-00ff99?style=flat-square&labelColor=1c1c22" alt="Web version at jzr.tools"></a>
 </p>
 
@@ -192,7 +192,7 @@ claude plugin install jzr@jzr-tools
 
 The MCP server needs the `mcp` extra; which client gets what, and what each
 tool may change, is in
-[docs/agents.md](https://github.com/jzr-supove/jzr-tools/blob/main/docs/agents.md).
+[docs/ai-agents.md](https://github.com/jzr-supove/jzr-tools/blob/main/docs/ai-agents.md).
 
 ## Documentation
 
@@ -207,7 +207,7 @@ tool may change, is in
 | [Ports and your machine](https://github.com/jzr-supove/jzr-tools/blob/main/docs/system.md) | `port show`, `killport`, Windows excluded ports, `host status`, `host clean`, `host procs` |
 | [Shortcuts](https://github.com/jzr-supove/jzr-tools/blob/main/docs/shortcuts.md) | `jzr bind`: save long commands under short names |
 | [Shell completion](https://github.com/jzr-supove/jzr-tools/blob/main/docs/completion.md) | Tab completion for bash, zsh, fish and PowerShell |
-| [AI agents](https://github.com/jzr-supove/jzr-tools/blob/main/docs/agents.md) | The skill, the MCP server and the Claude Code plugin |
+| [AI agents](https://github.com/jzr-supove/jzr-tools/blob/main/docs/ai-agents.md) | The skill, the MCP server and the Claude Code plugin |
 
 Every command also explains itself: `jzr -h`, or `-h` after any group or
 command.
