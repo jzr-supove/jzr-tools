@@ -1,6 +1,6 @@
 {
   "name": "jzr",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Everyday file and machine jobs from the jzr command line: convert, compress and inspect images, video, audio and PDFs, convert data, free ports and more.",
   "author": {
     "name": "JZR SUPOVE"
@@ -21,7 +21,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "jzr-tools[mcp]==0.2.0",
+        "jzr-tools[mcp]==0.3.0",
         "jzr",
         "agent",
         "mcp"

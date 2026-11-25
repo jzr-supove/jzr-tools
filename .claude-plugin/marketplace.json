@@ -9,7 +9,7 @@
       "name": "jzr",
       "source": "./plugins/jzr",
       "description": "Everyday file and machine jobs from the jzr command line: convert, compress and inspect images, video, audio and PDFs, convert data, free ports and more.",
-      "version": "0.2.0"
+      "version": "0.3.0"
     }
   ]
 }
