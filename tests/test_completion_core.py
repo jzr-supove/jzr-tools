@@ -872,7 +872,10 @@ class PowerShellInfoTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("pwsh"), "pwsh is not on PATH")
     def test_real_pwsh_reports_an_all_hosts_profile_and_a_policy(self) -> None:
-        info = powershell_info(shutil.which("pwsh"))
+        # A first PowerShell start on a busy CI runner has taken more than the
+        # 10 s that jzr itself waits; this test checks what pwsh reports, not
+        # how fast it starts.
+        info = powershell_info(shutil.which("pwsh"), timeout=120)
         self.assertEqual(info.profile.name, "profile.ps1")
         self.assertTrue(info.policy)
 

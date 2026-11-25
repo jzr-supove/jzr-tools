@@ -49,7 +49,10 @@ skipped without it. CI runs the suite on Windows, Linux and macOS with Python 3.
 
 To an existing group: add a Click command to
 `src/jzr_tools/commands/<group>.py` and put its logic in a module under
-`src/jzr_tools/core/`. Add a row to the command table in `README.md`.
+`src/jzr_tools/core/`. Add a row to the command table in `README.md` and
+describe the command in the matching page under `docs/` (`docs/images.md`,
+`docs/pdf.md` and so on). A new group gets its own page, linked from the
+Documentation table in `README.md`.
 
 A new group takes three steps:
 
