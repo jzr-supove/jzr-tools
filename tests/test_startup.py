@@ -21,7 +21,7 @@ SRC_PATH = PROJECT_ROOT / "src"
 
 LAZY_NAMES = {
     "image", "text", "port", "killport", "host", "bind", "video", "audio", "ffmpeg", "completion", "file",
-    "uuid", "password", "random", "hash", "timestamp", "data", "jwt", "env", "agent",
+    "uuid", "password", "random", "hash", "timestamp", "data", "jwt", "env", "agent", "pdf",
 }
 BOX_CHARS = ("╭", "│", "╰", "─")
 
@@ -428,6 +428,7 @@ class RegistryTests(unittest.TestCase):
                 "jwt": "jzr_tools.commands.jwt:jwt_command",
                 "env": "jzr_tools.commands.env:app",
                 "agent": "jzr_tools.commands.agent:app",
+                "pdf": "jzr_tools.commands.pdf:app",
             },
         )
 

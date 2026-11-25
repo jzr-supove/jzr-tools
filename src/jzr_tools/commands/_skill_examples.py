@@ -32,6 +32,43 @@ EXAMPLES: dict[str, tuple[tuple[str, str], ...]] = {
         ("jzr image strip -d photos --dry-run", "shows what each file would lose"),
         ("jzr image strip shot.png --in-place", "cleans the file itself"),
     ),
+    "pdf info": (
+        ("jzr pdf info report.pdf", "pages, paper size, metadata and features"),
+        ("jzr pdf info a.pdf b.pdf --json", "the same facts as one JSON array"),
+    ),
+    "pdf merge": (
+        ("jzr pdf merge a.pdf b.pdf c.pdf", "writes a_merged.pdf, in the order given"),
+        ("jzr pdf merge *.pdf -o all.pdf --dry-run", "shows the result without writing it"),
+    ),
+    "pdf text": (
+        ("jzr pdf text report.pdf", "plain text, a form feed between pages"),
+        ("jzr pdf text report.pdf --markdown -o report.md", "headings, lists, tables and links"),
+        ("jzr pdf text slides.pdf --pages 2-4 --markdown --page-breaks", "--- between pages"),
+    ),
+    "pdf split": (
+        ("jzr pdf split book.pdf", "one file per page, from book_split-001.pdf on"),
+        ("jzr pdf split book.pdf --every 10", "ten pages per file"),
+        ('jzr pdf split book.pdf --pages "1-3;4,6;7-"', "one file per group"),
+    ),
+    "pdf compress": (
+        ("jzr pdf compress report.pdf", "writes report_compressed.pdf, images at 150 DPI"),
+        ("jzr pdf compress -d scans --level strong --dry-run", "lists what a scan of scans/ would write"),
+        ("jzr pdf compress big.pdf -o small.pdf --strip", "also drops the document info and XMP"),
+    ),
+    "pdf from-images": (
+        ("jzr pdf from-images scan1.jpg scan2.jpg -o scans.pdf", "one A4 page per picture"),
+        ("jzr pdf from-images *.png --paper original", "each page the picture's own size"),
+        ("jzr pdf from-images photo.heic --orientation landscape --margin 0", "fills a landscape page"),
+    ),
+    "pdf images": (
+        ("jzr pdf images slides.pdf", "writes slides_page-001.jpg and on, at 150 DPI"),
+        ("jzr pdf images report.pdf --to png --dpi 300 --pages 1", "the first page as a sharp PNG"),
+    ),
+    "pdf organize": (
+        ("jzr pdf organize scan.pdf --rotate 2-4:90", "turns pages 2 to 4 clockwise"),
+        ("jzr pdf organize scan.pdf --delete 1,5", "writes scan_organized.pdf without pages 1 and 5"),
+        ("jzr pdf organize scan.pdf --order 12-1", "reverses the pages"),
+    ),
     "video compress": (
         ("jzr video compress clip.mov", "writes clip_compressed.mp4"),
         ("jzr video compress clip.mp4 -s 25MB", "stays at or under 25 MB"),

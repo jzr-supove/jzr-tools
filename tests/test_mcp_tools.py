@@ -88,6 +88,14 @@ EXPECTED_EXPOSED = {
     "host_status": _row("host status", "read", ("live", "interval")),
     "host_procs": _row("host procs", "read", ("kill", "force")),
     "data_convert": _row("data convert", "write", ("overwrite",)),
+    "pdf_info": _row("pdf info", "read"),
+    "pdf_text": _row("pdf text", "read", ("output", "overwrite")),
+    "pdf_images": _row("pdf images", "write", ("overwrite",)),
+    "pdf_from_images": _row("pdf from-images", "write", ("overwrite",)),
+    "pdf_compress": _row("pdf compress", "write", ("overwrite",)),
+    "pdf_merge": _row("pdf merge", "write", ("overwrite",)),
+    "pdf_organize": _row("pdf organize", "write", ("overwrite",)),
+    "pdf_split": _row("pdf split", "write", ("overwrite",)),
     "image_compress": _row("image compress", "write", ("overwrite",)),
     "image_convert": _row("image convert", "write", ("overwrite",)),
     "image_resize": _row("image resize", "write", ("overwrite",)),
@@ -1348,6 +1356,8 @@ class ArgvErrorTests(unittest.TestCase):
             ("audio_tags_edit", {"files": ["/a.mp3"], "json": True}, "json"),
             ("text_base64", {"text": "x", "output": "/o.txt"}, "output"),
             ("data_json", {"files": ["/a.json"], "write": True}, "write"),
+            ("pdf_text", {"file": "/a.pdf", "output": "/o.txt"}, "output"),
+            ("pdf_text", {"file": "/a.pdf", "overwrite": True}, "overwrite"),
             ("host_status", {"live": True}, "live"),
             ("uuid", {"copy": True}, "copy"),
         )
@@ -1412,7 +1422,7 @@ class ArgvErrorTests(unittest.TestCase):
             set(batch),
             {"image_compress", "image_convert", "image_resize", "image_strip", "video_compress",
              "video_convert", "video_trim", "video_gif", "audio_convert", "audio_trim",
-             "file_rename", "file_rename_apply"},
+             "file_rename", "file_rename_apply", "pdf_compress"},
         )
         for name in batch:
             for arguments in ({}, {"dir": None}, {"sources": None}, {"sources": []}, {"recursive": True}):
@@ -2318,6 +2328,43 @@ class ReadOnlyToolTests(FolderCase):
         self.assertTrue(refused.is_error)
         self.assertIn("unknown argument 'write'", refused.text)
         self.assertEqual(source.read_bytes(), before)
+
+    def test_pdf_text_returns_the_text_and_never_writes_a_file(self) -> None:
+        from tests import text_pdf_fixtures as tx
+
+        source = self.write(
+            "a.pdf",
+            tx.build([[tx.Line("First page", 40, 100)], [tx.Line("Page two", 40, 100)]]),
+        )
+        before = source.read_bytes()
+        target = self.folder / "out.txt"
+
+        plain = self.call("pdf_text", {"file": str(source)})
+        markdown = self.call("pdf_text", {"file": str(source), "markdown": True, "pages": "2"})
+        refused = self.call("pdf_text", {"file": str(source), "output": str(target)})
+
+        self.assertFalse(plain.is_error, plain.text)
+        self.assertIn("First page", plain.text)
+        self.assertIn("Page two", plain.text)
+        self.assertFalse(markdown.is_error, markdown.text)
+        self.assertIn("Page two", markdown.text)
+        self.assertNotIn("First page", markdown.text)
+        self.assertTrue(refused.is_error)
+        self.assertIn("unknown argument 'output'", refused.text)
+        self.assertFalse(target.exists())
+        self.assertEqual(source.read_bytes(), before)
+
+    def test_pdf_text_of_a_scan_is_an_error_that_says_so(self) -> None:
+        from tests import pdf_fixtures as fx
+
+        source = self.write("scan.pdf", fx.with_image(1))
+
+        result = self.call("pdf_text", {"file": str(source)})
+
+        # Exit 1 is a result the agent reads, like any other tool's exit 1.
+        self.assertFalse(result.is_error)
+        self.assertIn("no selectable text; the PDF may be scanned (there is no OCR)", result.text)
+        self.assertIn("[exit code 1]", result.text)
 
     def test_text_base64_cannot_write_a_file_or_use_the_clipboard(self) -> None:
         target = self.folder / "out.txt"

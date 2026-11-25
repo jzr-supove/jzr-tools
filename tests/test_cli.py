@@ -62,7 +62,7 @@ class CliTests(unittest.TestCase):
             sorted(listed),
             [
                 "agent", "audio", "bind", "completion", "data", "env", "ffmpeg", "file", "hash", "host", "image",
-                "jwt", "killport", "password", "port", "random", "text", "timestamp", "uuid",
+                "jwt", "killport", "password", "pdf", "port", "random", "text", "timestamp", "uuid",
                 "version", "video",
             ],
         )

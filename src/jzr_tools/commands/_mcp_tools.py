@@ -62,6 +62,14 @@ EXPOSED: dict[str, Exposed] = {
     "image_resize": _write("image resize"),
     # --in-place replaces the sources, which no write tool may do.
     "image_strip": Exposed("image strip", "write", frozenset({"overwrite", "in_place"})),
+    "pdf_info": _read("pdf info"),
+    "pdf_text": _read("pdf text", "output", "overwrite"),
+    "pdf_merge": _write("pdf merge"),
+    "pdf_compress": _write("pdf compress"),
+    "pdf_from_images": _write("pdf from-images"),
+    "pdf_images": _write("pdf images"),
+    "pdf_organize": _write("pdf organize"),
+    "pdf_split": _write("pdf split"),
     "video_compress": _write("video compress"),
     "video_convert": _write("video convert"),
     "video_formats": _read("video formats"),
@@ -125,6 +133,7 @@ NOT_EXPOSED: dict[str, str] = {
 _ARGUMENT_HELP = {
     "sources": "Files to work on. Without them every matching file in dir is taken.",
     "files": "The files to read.",
+    "pictures": "The pictures, one page each, in this order.",
     "file": "The file to read.",
     "ports": "Port numbers.",
     "bounds": "The lowest and the highest number; left out, 1 and 100.",

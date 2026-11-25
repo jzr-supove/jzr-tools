@@ -23,6 +23,7 @@ _COMMANDS: dict[str, tuple[str, str]] = {
     "image": ("jzr_tools.commands.image:app", "Convert, compress, resize and inspect images."),
     "video": ("jzr_tools.commands.video:app", "Work with video files."),
     "audio": ("jzr_tools.commands.audio:app", "Work with audio files."),
+    "pdf": ("jzr_tools.commands.pdf:app", "Merge, split, compress, render and read PDF files."),
     "ffmpeg": ("jzr_tools.commands.ffmpeg:app", "Install and check the ffmpeg jzr uses."),
     "file": ("jzr_tools.commands.file:app", "Rename and organise files."),
     "text": ("jzr_tools.commands.text:app", "Text utilities."),

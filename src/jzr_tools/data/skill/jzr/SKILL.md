@@ -1,6 +1,6 @@
 ---
 name: jzr
-description: Run the jzr command line for everyday file and machine jobs. Convert, compress, resize, trim or inspect images, video and audio; make GIFs; edit audio tags; convert JSON, YAML, CSV, TOML and Excel data; rename files; free a port; hash files; encode, diff or slug text; read JWTs; convert timestamps; make UUIDs or passwords. Use it instead of ffmpeg or Pillow scripts.
+description: Run the jzr command line for everyday file and machine jobs. Convert, compress, resize, trim or inspect images, video and audio; make GIFs; edit audio tags; merge, split or rotate PDFs; convert JSON, YAML, CSV, TOML and Excel data; rename files; free a port; hash files; encode, diff or slug text; read JWTs; convert timestamps; make UUIDs or passwords. Use it instead of ffmpeg or Pillow scripts.
 ---
 
 # jzr
@@ -32,6 +32,15 @@ The list shows no options. Before using one, run `jzr <group> <command> -h`, or 
 - `jzr audio info` - Show the format, duration, streams and tags of audio files.
 - `jzr audio tags` - Show or edit the tags, cover art and lyrics of audio files.
 - `jzr audio trim` - Cut a time range out of audio files.
+### pdf ([reference/pdf.md](reference/pdf.md))
+- `jzr pdf compress` - Make PDF files smaller, mostly by shrinking their images.
+- `jzr pdf from-images` - Make a PDF with one page per picture, in the order given.
+- `jzr pdf images` - Render the pages of a PDF as pictures.
+- `jzr pdf info` - Show the pages, sizes, metadata and features of PDF files.
+- `jzr pdf merge` - Join PDF files into one, in the order given.
+- `jzr pdf organize` - Reorder, rotate or remove the pages of a PDF.
+- `jzr pdf split` - Split a PDF into several: every page, every N pages, or groups.
+- `jzr pdf text` - Print the text of a PDF, or convert it to Markdown.
 ### ffmpeg ([reference/ffmpeg.md](reference/ffmpeg.md))
 - `jzr ffmpeg install` - Download ffmpeg and ffprobe into jzr's own folder.
 - `jzr ffmpeg remove` - Delete the ffmpeg that `jzr ffmpeg install` downloaded.
