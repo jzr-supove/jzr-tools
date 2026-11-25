@@ -1162,6 +1162,44 @@ class DataConvertStartupTests(_ObservedTestCase):
                 self.assert_not_loaded(obs, [m for m in ("yaml", "openpyxl", "tomli_w") if m != wanted])
 
 
+class AgentInstallStartupTests(_ObservedTestCase):
+    def test_install_and_remove_help_list_client_and_load_nothing_heavy(self) -> None:
+        for action in ("install", "remove"):
+            with self.subTest(action=action):
+                obs = self.run_cli("agent", action, "-h")
+                self.assert_ok(obs)
+                self.assertIn("Usage:", obs.stdout)
+                self.assertIn("--client", obs.stdout)
+                self.assert_not_loaded(
+                    obs,
+                    HEAVY_MODULES
+                    + ["mcp", "jzr_tools.core.mcp_setup", "jzr_tools.core.skill", "jzr_tools.commands._plugin"],
+                )
+
+    def test_the_group_short_help_is_unchanged(self) -> None:
+        obs = self.run_cli("--help")
+        self.assert_ok(obs)
+        self.assertRegex(
+            obs.stdout, r"(?m)^  agent\s+Connect jzr to AI agents \(skill and MCP server\)\."
+        )
+        sys.path.insert(0, str(SRC_PATH))
+        try:
+            cli = importlib.import_module("jzr_tools.cli")
+        finally:
+            sys.path.remove(str(SRC_PATH))
+        self.assertEqual(
+            cli.app.lazy_commands["agent"],
+            ("jzr_tools.commands.agent:app", "Connect jzr to AI agents (skill and MCP server)."),
+        )
+
+    def test_an_ordinary_run_never_loads_the_plugin_generator(self) -> None:
+        for args in (["--version"], ["--help"], ["text", "slug", "x"], ["agent", "-h"]):
+            with self.subTest(args=args):
+                obs = self.run_cli(*args)
+                self.assert_ok(obs)
+                self.assert_not_loaded(obs, ["jzr_tools.commands._plugin"])
+
+
 ENV_DIFF_MODULES = [
     "jzr_tools.core.envfile",
     "jzr_tools.core.textdiff",

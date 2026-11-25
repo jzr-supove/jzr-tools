@@ -1,0 +1,31 @@
+{
+  "name": "jzr",
+  "version": "0.2.0",
+  "description": "Everyday file and machine jobs from the jzr command line: convert, compress and inspect images, video, audio and PDFs, convert data, free ports and more.",
+  "author": {
+    "name": "JZR SUPOVE"
+  },
+  "homepage": "https://github.com/jzr-supove/jzr-tools",
+  "repository": "https://github.com/jzr-supove/jzr-tools",
+  "license": "Apache-2.0",
+  "keywords": [
+    "cli",
+    "images",
+    "video",
+    "audio",
+    "pdf",
+    "files"
+  ],
+  "mcpServers": {
+    "jzr": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "jzr-tools[mcp]==0.2.0",
+        "jzr",
+        "agent",
+        "mcp"
+      ]
+    }
+  }
+}

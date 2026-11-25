@@ -1,8 +1,9 @@
 """Build the texts of the agent skill from the commands themselves.
 
 The results are committed under ``data/skill/jzr`` and shipped with the
-package; a test fails when they no longer match the commands. After changing
-a command, its help or its examples, run::
+package; a test fails when they no longer match the commands. In a checkout
+the same run also writes the Claude Code plugin files (see ``_plugin``). After
+changing a command, its help or its examples, run::
 
     uv run python -m jzr_tools.commands._skill_text
 """
@@ -98,6 +99,17 @@ def write(folder: Path) -> list[Path]:
     return changed
 
 
+def _main() -> None:
+    from jzr_tools import __version__
+    from jzr_tools.commands import _plugin
+
+    changed = write(source_dir())
+    root = _plugin.repository_root(Path(__file__).resolve().parents[1])
+    if root is not None:
+        changed += _plugin.write(root, _plugin.plugin_files(build(), __version__))
+    for path in changed or ["up to date"]:
+        click.echo(str(path))
+
+
 if __name__ == "__main__":
-    for _path in write(source_dir()) or ["up to date"]:
-        click.echo(str(_path))
+    _main()

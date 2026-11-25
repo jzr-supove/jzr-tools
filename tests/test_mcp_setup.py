@@ -5,6 +5,7 @@ Nothing here starts `claude`: `run` and `which` are always fakes.
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import json
 import os
@@ -382,6 +383,289 @@ class UnregisterTests(unittest.TestCase):
 
         self.assertEqual(result.status, "failed")
         self.assertIn("boom", result.detail)
+
+
+CODEX = "/usr/local/bin/codex"
+CODE = "/usr/local/bin/code"
+SERVER = ["/opt/jzr", "agent", "mcp"]
+CURSOR_PREFIX = "cursor://anysphere.cursor-deeplink/mcp/install?name=jzr&config="
+
+
+class CodexCommandTests(unittest.TestCase):
+    def test_add_command_puts_the_server_after_a_double_dash(self) -> None:
+        self.assertEqual(
+            _setup().codex_add_command(CODEX, SERVER),
+            [CODEX, "mcp", "add", "jzr", "--", "/opt/jzr", "agent", "mcp"],
+        )
+
+    def test_add_command_keeps_a_module_launch_and_a_spaced_path_as_separate_words(self) -> None:
+        command = _setup().codex_add_command("C:\\Program Files\\codex.cmd", WINDOWS_SERVER)
+
+        self.assertEqual(command[0], "C:\\Program Files\\codex.cmd")
+        self.assertEqual(command[command.index("--") + 1 :], WINDOWS_SERVER)
+
+    def test_remove_command_names_the_server(self) -> None:
+        self.assertEqual(_setup().codex_remove_command(CODEX), [CODEX, "mcp", "remove", "jzr"])
+
+    def test_the_builders_leave_their_input_alone(self) -> None:
+        server = list(SERVER)
+
+        _setup().codex_add_command(CODEX, server)
+
+        self.assertEqual(server, SERVER)
+
+
+class VscodeCommandTests(unittest.TestCase):
+    def test_add_command_is_one_option_and_one_json_argument(self) -> None:
+        command = _setup().vscode_add_command(CODE, SERVER)
+
+        self.assertEqual(len(command), 3, command)
+        self.assertEqual(command[:2], [CODE, "--add-mcp"])
+
+    def test_the_json_names_the_server_and_how_to_start_it(self) -> None:
+        document = json.loads(_setup().vscode_add_command(CODE, SERVER)[2])
+
+        self.assertEqual(
+            document, {"name": "jzr", "type": "stdio", "command": "/opt/jzr", "args": ["agent", "mcp"]}
+        )
+        self.assertEqual(list(document), ["name", "type", "command", "args"])
+
+    def test_a_windows_path_with_spaces_and_a_module_launch_survive_the_round_trip(self) -> None:
+        document = json.loads(_setup().vscode_add_command(CODE, WINDOWS_SERVER)[2])
+        self.assertEqual(document["command"], WINDOWS_SERVER[0])
+        self.assertEqual(document["args"], ["agent", "mcp"])
+
+        launch = ["/py/python", "-m", "jzr_tools", "agent", "mcp"]
+        document = json.loads(_setup().vscode_add_command(CODE, launch)[2])
+        self.assertEqual(document["command"], "/py/python")
+        self.assertEqual(document["args"], ["-m", "jzr_tools", "agent", "mcp"])
+
+
+class CursorTests(unittest.TestCase):
+    PATHOLOGICAL = ["/opt/my tools/jzr?x>y", "agent", "mcp"]
+
+    def test_entry_gives_back_the_command_and_arguments(self) -> None:
+        text = _setup().cursor_entry(SERVER)
+
+        entry = _jzr_entry(json.loads(text))
+        self.assertEqual(entry["command"], "/opt/jzr")
+        self.assertEqual(entry["args"], ["agent", "mcp"])
+
+    def test_entry_keeps_windows_backslashes_through_the_round_trip(self) -> None:
+        entry = _jzr_entry(json.loads(_setup().cursor_entry(WINDOWS_SERVER)))
+
+        self.assertEqual(entry["command"], WINDOWS_SERVER[0])
+        self.assertEqual(entry["args"], ["agent", "mcp"])
+
+    def test_the_link_starts_with_the_cursor_install_address_for_jzr(self) -> None:
+        link = _setup().cursor_link(SERVER)
+
+        self.assertTrue(link.startswith(CURSOR_PREFIX), link)
+
+    def test_the_link_config_is_standard_base64_of_compact_json_and_is_not_percent_encoded(self) -> None:
+        compact = json.dumps(
+            {"command": self.PATHOLOGICAL[0], "args": self.PATHOLOGICAL[1:]}, separators=(",", ":")
+        ).encode("utf-8")
+        standard = base64.b64encode(compact).decode("ascii")
+        # The sample must tell the standard alphabet and padding from the URL-safe form.
+        self.assertNotEqual(standard, base64.urlsafe_b64encode(compact).decode("ascii"))
+
+        link = _setup().cursor_link(self.PATHOLOGICAL)
+
+        self.assertEqual(link, CURSOR_PREFIX + standard)
+
+    def test_the_link_config_decodes_to_the_command_and_arguments_and_nothing_else(self) -> None:
+        link = _setup().cursor_link(WINDOWS_SERVER)
+
+        config = link[len(CURSOR_PREFIX):]
+        decoded = base64.b64decode(config, validate=True).decode("utf-8")
+        self.assertEqual(decoded, json.dumps({"command": WINDOWS_SERVER[0], "args": ["agent", "mcp"]}, separators=(",", ":")))
+        self.assertEqual(list(json.loads(decoded)), ["command", "args"])
+
+
+class VscodePathTests(unittest.TestCase):
+    def test_each_platform_has_its_own_user_mcp_file(self) -> None:
+        setup = _setup()
+
+        self.assertEqual(setup.vscode_path("win32"), "%APPDATA%\\Code\\User\\mcp.json")
+        self.assertEqual(setup.vscode_path("darwin"), "~/Library/Application Support/Code/User/mcp.json")
+        self.assertEqual(setup.vscode_path("linux"), "~/.config/Code/User/mcp.json")
+
+    def test_an_unknown_platform_gets_the_linux_path(self) -> None:
+        self.assertEqual(_setup().vscode_path("freebsd14"), "~/.config/Code/User/mcp.json")
+
+
+class RegisterCodexTests(unittest.TestCase):
+    def test_added_in_the_output_is_added_and_exactly_the_add_command_runs(self) -> None:
+        run = FakeRun(0, out="Added global MCP server 'jzr'.\n")
+
+        result = _setup().register_codex(CODEX, SERVER, run=run)
+
+        self.assertEqual((result.status, result.detail), ("added", ""))
+        self.assertEqual(len(run.calls), 1)
+        self.assertEqual(run.calls[0][0], _setup().codex_add_command(CODEX, SERVER))
+
+    def test_the_child_never_inherits_the_terminal_and_is_not_run_through_a_shell(self) -> None:
+        run = FakeRun(0, out="Added global MCP server 'jzr'.\n")
+
+        _setup().register_codex(CODEX, SERVER, run=run)
+
+        kwargs = run.calls[0][1]
+        self.assertTrue(kwargs.get("stdin") == subprocess.DEVNULL or kwargs.get("input") is not None, kwargs)
+        self.assertFalse(kwargs.get("shell"), kwargs)
+
+    def test_a_failing_exit_reports_the_last_output_line(self) -> None:
+        run = FakeRun(1, err="loading config\nerror: cannot write config.toml\n")
+
+        result = _setup().register_codex(CODEX, SERVER, run=run)
+
+        self.assertEqual((result.status, result.detail), ("failed", "error: cannot write config.toml"))
+
+    def test_an_exit_zero_without_the_added_line_is_not_a_success(self) -> None:
+        run = FakeRun(0, out="something unexpected\n")
+
+        result = _setup().register_codex(CODEX, SERVER, run=run)
+
+        self.assertEqual((result.status, result.detail), ("failed", "something unexpected"))
+
+    def test_odd_bytes_in_the_output_never_raise(self) -> None:
+        run = FakeRun(0, out=b"\xff\xfe Added global MCP server 'jzr'. \x81\n")
+
+        self.assertEqual(_setup().register_codex(CODEX, SERVER, run=run).status, "added")
+
+    def test_a_program_that_cannot_be_started_is_failed_with_its_message(self) -> None:
+        run = FakeRun(raises=OSError("The system cannot find the file specified"))
+
+        result = _setup().register_codex(CODEX, SERVER, run=run)
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("cannot find the file", result.detail)
+
+
+class UnregisterCodexTests(unittest.TestCase):
+    def test_removed_in_the_output_is_removed_and_exactly_the_remove_command_runs(self) -> None:
+        run = FakeRun(0, out="Removed global MCP server 'jzr'.\n")
+
+        result = _setup().unregister_codex(CODEX, run=run)
+
+        self.assertEqual((result.status, result.detail), ("removed", ""))
+        self.assertEqual(len(run.calls), 1)
+        self.assertEqual(run.calls[0][0], _setup().codex_remove_command(CODEX))
+
+    def test_no_server_named_jzr_is_absent_even_though_codex_exits_zero(self) -> None:
+        run = FakeRun(0, out="No MCP server named 'jzr' found.\n")
+
+        result = _setup().unregister_codex(CODEX, run=run)
+
+        self.assertEqual((result.status, result.detail), ("absent", ""))
+
+    def test_the_child_never_inherits_the_terminal(self) -> None:
+        run = FakeRun(0, out="Removed global MCP server 'jzr'.\n")
+
+        _setup().unregister_codex(CODEX, run=run)
+
+        kwargs = run.calls[0][1]
+        self.assertTrue(kwargs.get("stdin") == subprocess.DEVNULL or kwargs.get("input") is not None, kwargs)
+        self.assertFalse(kwargs.get("shell"), kwargs)
+
+    def test_any_other_output_is_failed_with_its_last_line(self) -> None:
+        run = FakeRun(1, err="starting\nerror: config is locked\n")
+
+        result = _setup().unregister_codex(CODEX, run=run)
+
+        self.assertEqual((result.status, result.detail), ("failed", "error: config is locked"))
+
+    def test_a_program_that_cannot_be_started_is_failed(self) -> None:
+        result = _setup().unregister_codex(CODEX, run=FakeRun(raises=OSError("boom")))
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("boom", result.detail)
+
+
+class RegisterVscodeTests(unittest.TestCase):
+    def test_the_added_mcp_servers_line_is_added_and_exactly_the_add_command_runs(self) -> None:
+        run = FakeRun(0, out="Added MCP servers: jzr\n")
+
+        result = _setup().register_vscode(CODE, SERVER, run=run)
+
+        self.assertEqual((result.status, result.detail), ("added", ""))
+        self.assertEqual(len(run.calls), 1)
+        self.assertEqual(run.calls[0][0], _setup().vscode_add_command(CODE, SERVER))
+
+    def test_the_child_never_inherits_the_terminal_and_is_not_run_through_a_shell(self) -> None:
+        run = FakeRun(0, out="Added MCP servers: jzr\n")
+
+        _setup().register_vscode(CODE, SERVER, run=run)
+
+        kwargs = run.calls[0][1]
+        self.assertTrue(kwargs.get("stdin") == subprocess.DEVNULL or kwargs.get("input") is not None, kwargs)
+        self.assertFalse(kwargs.get("shell"), kwargs)
+
+    def test_bad_json_with_exit_zero_is_failed_with_the_message(self) -> None:
+        run = FakeRun(0, out="Invalid JSON: Unexpected token } in JSON at position 12\n")
+
+        result = _setup().register_vscode(CODE, SERVER, run=run)
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.detail, "Invalid JSON: Unexpected token } in JSON at position 12")
+
+    def test_no_output_at_all_is_failed_not_added(self) -> None:
+        result = _setup().register_vscode(CODE, SERVER, run=FakeRun(0))
+
+        self.assertEqual(result.status, "failed")
+        self.assertIsInstance(result.detail, str)
+
+    def test_a_failing_exit_reports_the_last_line(self) -> None:
+        run = FakeRun(1, err="cannot open the profile\n")
+
+        result = _setup().register_vscode(CODE, SERVER, run=run)
+
+        self.assertEqual((result.status, result.detail), ("failed", "cannot open the profile"))
+
+    def test_odd_bytes_in_the_output_never_raise(self) -> None:
+        run = FakeRun(0, out=b"\xff\xfe Added MCP servers: jzr \x81\n")
+
+        self.assertEqual(_setup().register_vscode(CODE, SERVER, run=run).status, "added")
+
+    def test_a_program_that_cannot_be_started_is_failed(self) -> None:
+        result = _setup().register_vscode(CODE, SERVER, run=FakeRun(raises=OSError("no such file")))
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("no such file", result.detail)
+
+
+class NewHelpersStayLightTests(unittest.TestCase):
+    def test_the_builders_import_neither_click_nor_mcp(self) -> None:
+        code = (
+            "import sys\n"
+            "from jzr_tools.core import mcp_setup as m\n"
+            "s = ['a', 'b']\n"
+            "m.codex_add_command('codex', s)\n"
+            "m.codex_remove_command('codex')\n"
+            "m.vscode_add_command('code', s)\n"
+            "m.cursor_entry(s)\n"
+            "m.cursor_link(s)\n"
+            "m.vscode_path('win32')\n"
+            "bad = sorted(x for x in sys.modules if x.split('.')[0] in ('click', 'mcp', 'mcp_types'))\n"
+            "print('@@BAD@@' + ','.join(bad))\n"
+        )
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(SRC_PATH)
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=PROJECT_ROOT,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
+        )
+
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        line = next(item for item in proc.stdout.splitlines() if item.startswith("@@BAD@@"))
+        self.assertEqual(line, "@@BAD@@")
 
 
 class AvailabilityTests(unittest.TestCase):

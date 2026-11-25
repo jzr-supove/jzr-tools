@@ -1592,6 +1592,29 @@ the option.
 Agents that can run commands need only the skill. The MCP server is for programs
 without a shell, such as Claude Desktop.
 
+| Client | Skill | MCP server |
+|---|---|---|
+| Claude Code | `jzr agent install`, or the plugin (from 0.3.0) | `jzr agent install --mcp`, or the plugin |
+| Codex | `jzr agent install` | `jzr agent install --mcp` |
+| Cursor | `jzr agent install` | the entry or link that `--mcp` prints |
+| VS Code / Copilot | – | `jzr agent install --mcp` (when `code` is on PATH) |
+| Claude Desktop | – | the entry that `--mcp` prints |
+| Gemini CLI, Antigravity, Devin, Goose | read `~/.agents/skills`: `jzr agent install --agent codex` | their own MCP settings |
+| Zed, Cline and others | – | the usual `mcpServers` JSON, with `jzr agent mcp` as the command |
+
+For one Claude Code, use either the plugin or `jzr agent install`, not both:
+it would see two copies of the skill and two servers.
+
+The plugin comes from this repository's marketplace:
+
+```
+claude plugin marketplace add jzr-supove/jzr-tools
+claude plugin install jzr@jzr-tools
+```
+
+It starts the server with `uvx`, so it needs [uv](https://docs.astral.sh/uv/)
+but no installed jzr.
+
 ### Skill
 
 ```
@@ -1632,12 +1655,20 @@ uv tool install "jzr-tools[mcp]"      # or: pipx install "jzr-tools[mcp]"
 jzr agent install --mcp
 ```
 
-`--mcp` installs the skill as above, registers the server with Claude Code for
-all your projects (when `claude` is on PATH), and prints the entry to add to
-Claude Desktop: open Settings > Developer > Edit Config, paste it and restart
-the app. jzr does not edit that file itself. Any other MCP client can start the
+`--mcp` installs the skill as above and then sets up the server for your user:
+
+- Claude Code, Codex and VS Code are told through their own command lines
+  (`claude mcp add`, `codex mcp add`, `code --add-mcp`). One that is not on
+  PATH is skipped; Claude Code gets the command to run later.
+- For Cursor and Claude Desktop it prints the entry to add, and for Cursor also
+  a link that adds it. jzr does not edit their settings files itself. In Claude
+  Desktop: Settings > Developer > Edit Config, paste it and restart the app.
+- `--client claude`, `codex`, `vscode`, `cursor` or `desktop` handles only that
+  one. `--dry-run` shows the commands instead of running them.
+
+`jzr agent remove --mcp` takes the server out of Claude Code and Codex again and
+says where to remove it by hand elsewhere. Any other MCP client can start the
 server with `jzr agent mcp`, which talks over stdin and stdout.
-`jzr agent remove --mcp` takes it out of Claude Code again.
 
 | Tools | What they can do |
 |---|---|

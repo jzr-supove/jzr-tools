@@ -524,6 +524,22 @@ class SkillMdTests(unittest.TestCase):
         for code in ("0", "1", "2"):
             self.assertRegex(joined, rf"(?<!\d){code}(?!\d)")
 
+    def test_it_tells_agents_to_run_jzr_with_uvx_when_it_is_not_installed(self) -> None:
+        self.assertIn("uvx --from jzr-tools jzr", self.text)
+        install = [line for line in self.lines if "jzr --version" in line]
+        self.assertEqual(len(install), 1, install)
+        self.assertIn("uvx --from jzr-tools jzr", install[0])
+
+    def test_it_still_offers_installing_jzr_as_the_other_way(self) -> None:
+        self.assertIn("uv tool install jzr-tools", self.text)
+        self.assertIn("pipx install jzr-tools", self.text)
+
+    def test_the_built_skill_keeps_both_install_hints(self) -> None:
+        built = _text().build()["SKILL.md"]
+
+        self.assertIn("uvx --from jzr-tools jzr", built)
+        self.assertIn("uv tool install jzr-tools", built)
+
     def test_the_rules_say_how_to_get_ffmpeg(self) -> None:
         self.assertIn("jzr ffmpeg install", self.text)
 

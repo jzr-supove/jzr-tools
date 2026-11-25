@@ -6,6 +6,7 @@ folder, so the real ~/.claude, ~/.agents and ~/.codex are never touched.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -746,7 +747,7 @@ else:
     JZR_EXE = "/opt/tools/jzr"
     JZR_SPACED = "/opt/my tools/jzr"
 SERVER = [JZR_EXE, "agent", "mcp"]
-CONFLICT = "--mcp registers with Claude; it cannot be used with --project or --agent codex."
+CONFLICT = "--mcp registers for your user; it cannot be used with --project."
 DESKTOP_ADD = (
     "Claude Desktop: open Settings > Developer > Edit Config, add this entry and restart the app:"
 )
@@ -773,13 +774,15 @@ class McpCase(AgentCase):
 
         self.setup_module = mcp_setup
         self.claude_path: str | None = FAKE_CLAUDE
+        self.codex_path: str | None = None
+        self.code_path: str | None = None
         self.available = True
         self.jzr_words = [JZR_EXE]
         self.registration = mcp_setup.Registration("added")
         self.unregistration = mcp_setup.Registration("removed")
 
         def which(name: str, *args: object, **kwargs: object) -> str | None:
-            return self.claude_path if name == "claude" else None
+            return {"claude": self.claude_path, "codex": self.codex_path, "code": self.code_path}.get(name)
 
         self.register = mock.Mock(side_effect=lambda *a, **k: self.registration)
         self.unregister = mock.Mock(side_effect=lambda *a, **k: self.unregistration)
@@ -944,11 +947,29 @@ class McpOptionConflictTests(McpCase):
     def test_install_mcp_with_project_is_a_usage_error_and_writes_nothing(self) -> None:
         self.check_usage_error("install", "--mcp", "--project")
 
-    def test_install_mcp_with_agent_codex_is_a_usage_error_and_writes_nothing(self) -> None:
-        self.check_usage_error("install", "--mcp", "--agent", "codex")
-
     def test_install_mcp_with_project_and_codex_is_a_usage_error_and_writes_nothing(self) -> None:
         self.check_usage_error("install", "--mcp", "--project", "--agent", "codex")
+
+    def test_remove_mcp_with_project_is_a_usage_error_with_the_same_text(self) -> None:
+        self.check_usage_error("remove", "--mcp", "--project")
+
+    def test_the_old_wording_that_named_agent_codex_is_gone(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("install", "--mcp", "--project")
+
+        self.assertNotIn("--agent codex", result.stderr)
+        self.assertNotIn("registers with Claude;", result.stderr)
+
+    def test_install_mcp_with_agent_codex_is_allowed(self) -> None:
+        self.make_home(".claude", ".codex")
+
+        result = self.jzr("install", "--mcp", "--agent", "codex")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertNotIn(CONFLICT, result.output)
+        self.assertTrue((self.agents / "SKILL.md").is_file())
+        self.assertFalse(self.claude.exists())
 
     def test_the_conflict_wins_over_a_dry_run(self) -> None:
         self.check_usage_error("install", "--mcp", "--project", "--dry-run")
@@ -958,12 +979,12 @@ class McpOptionConflictTests(McpCase):
         self.jzr("install")
         self.jzr("install", "--project")
         before = _snapshot(self.root)
-        for extra in (("--project",), ("--agent", "codex"), ("--project", "--agent", "codex")):
+        for extra in (("--project",), ("--project", "--agent", "codex")):
             with self.subTest(extra=extra):
                 result = self.jzr("remove", "--mcp", *extra)
 
                 self.assertEqual(result.exit_code, 2, result.output)
-                self.assertIn("--mcp", result.stderr)
+                self.assertIn(CONFLICT, " ".join(result.stderr.split()))
                 self.assertEqual(_snapshot(self.root), before)
                 self.assertEqual(self.unregister.call_count, 0)
 
@@ -1070,6 +1091,582 @@ class RemoveMcpTests(McpCase):
         self.assertEqual(self.unregister.call_count, 0)
         self.assertNotIn("Claude Desktop", result.output)
         self.assertNotIn("MCP", result.output)
+
+
+FAKE_PROGRAM = """\
+import json, os, sys
+here = os.path.dirname(os.path.abspath(__file__))
+name = sys.argv[1]
+with open(os.path.join(here, name + ".calls"), "a", encoding="utf-8") as log:
+    log.write(json.dumps(sys.argv[2:]) + "\\n")
+with open(os.path.join(here, name + ".reply.json"), encoding="utf-8") as handle:
+    reply = json.load(handle)
+sys.stdout.write(reply["out"])
+sys.stderr.write(reply["err"])
+sys.exit(reply["code"])
+"""
+CODEX_ADDED = "Added global MCP server 'jzr'.\n"
+CODEX_REMOVED = "Removed global MCP server 'jzr'.\n"
+CODEX_ABSENT = "No MCP server named 'jzr' found.\n"
+CODE_ADDED = "Added MCP servers: jzr\n"
+CODEX_REGISTERED = "registered the jzr MCP server with Codex"
+CODEX_UNREGISTERED = "removed the jzr MCP server from Codex"
+CODEX_NOT_REGISTERED = "the jzr MCP server is not registered with Codex"
+VSCODE_REGISTERED = "registered the jzr MCP server with VS Code"
+CURSOR_HEADER = (
+    "Cursor: add this to ~/.cursor/mcp.json (or %USERPROFILE%\\.cursor\\mcp.json on Windows), "
+    "or open this link:"
+)
+CURSOR_REMOVE = "Cursor: remove the jzr entry from ~/.cursor/mcp.json."
+CURSOR_LINK = "cursor://anysphere.cursor-deeplink/mcp/install?name=jzr&config="
+VSCODE_FILE = {
+    "win32": "%APPDATA%\\Code\\User\\mcp.json",
+    "darwin": "~/Library/Application Support/Code/User/mcp.json",
+}.get(sys.platform, "~/.config/Code/User/mcp.json")
+VSCODE_REMOVE = f'VS Code: remove the jzr entry from {VSCODE_FILE} (or run "MCP: Open User Configuration").'
+CLIENT_NAMES = ("claude", "codex", "vscode", "cursor", "desktop")
+
+
+class FakePrograms:
+    """Stand-ins for `codex` and `code` that record their arguments and print a set reply."""
+
+    def __init__(self, folder: Path) -> None:
+        self.folder = folder
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "fake_program.py").write_text(FAKE_PROGRAM, encoding="utf-8")
+
+    def make(self, name: str, *, code: int = 0, out: str = "", err: str = "") -> str:
+        reply = {"code": code, "out": out, "err": err}
+        (self.folder / f"{name}.reply.json").write_text(json.dumps(reply), encoding="utf-8")
+        script = self.folder / "fake_program.py"
+        if sys.platform == "win32":
+            wrapper = self.folder / f"{name}.cmd"
+            wrapper.write_text(
+                f'@"{sys.executable}" "{script}" {name} %*\r\n@exit /b %ERRORLEVEL%\r\n',
+                encoding="utf-8",
+            )
+        else:
+            wrapper = self.folder / name
+            wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" {name} "$@"\n', encoding="utf-8")
+            wrapper.chmod(0o755)
+        return str(wrapper)
+
+    def calls(self, name: str) -> list[list[str]]:
+        log = self.folder / f"{name}.calls"
+        if not log.is_file():
+            return []
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+
+
+class ClientCase(McpCase):
+    """The agent commands with `claude` replaced and `codex` and `code` as recording fakes."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.fakes = FakePrograms(self.root / "fakebin")
+
+    def add_codex(self, **reply: object) -> str:
+        reply.setdefault("out", CODEX_ADDED)
+        self.codex_path = self.fakes.make("codex", **reply)
+        return self.codex_path
+
+    def add_code(self, **reply: object) -> str:
+        reply.setdefault("out", CODE_ADDED)
+        self.code_path = self.fakes.make("code", **reply)
+        return self.code_path
+
+    def cursor_block(self, stdout: str) -> tuple[dict, str]:
+        lines = stdout.splitlines()
+        start = lines.index(CURSOR_HEADER)
+        link_at = next(i for i in range(start + 1, len(lines)) if lines[i].startswith(CURSOR_LINK))
+        return json.loads("\n".join(lines[start + 1 : link_at])), lines[link_at]
+
+
+class ClientOptionTests(ClientCase):
+    def test_install_help_lists_the_client_option_with_its_five_names(self) -> None:
+        for action in ("install", "remove"):
+            with self.subTest(action=action):
+                result = self.jzr(action, "-h")
+
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertIn("--client", result.stdout)
+                for name in CLIENT_NAMES:
+                    self.assertIn(name, result.stdout)
+
+    def test_client_without_mcp_is_a_usage_error_and_changes_nothing(self) -> None:
+        self.make_home(".claude")
+        before = _snapshot(self.root)
+        for action in ("install", "remove"):
+            with self.subTest(action=action):
+                result = self.jzr(action, "--client", "codex")
+
+                self.assertEqual(result.exit_code, 2, result.output)
+                self.assertIn("--client only applies to --mcp.", " ".join(result.stderr.split()))
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(_snapshot(self.root), before)
+        self.assertEqual(self.register.call_count, 0)
+        self.assertEqual(self.unregister.call_count, 0)
+
+    def test_an_unknown_client_is_a_usage_error_and_changes_nothing(self) -> None:
+        self.make_home(".claude")
+        before = _snapshot(self.root)
+        for action in ("install", "remove"):
+            with self.subTest(action=action):
+                result = self.jzr(action, "--mcp", "--client", "bogus")
+
+                self.assertEqual(result.exit_code, 2, result.output)
+                self.assertIn("bogus", result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(_snapshot(self.root), before)
+
+    def test_every_listed_client_is_accepted(self) -> None:
+        self.make_home(".claude")
+        self.add_codex()
+        self.add_code()
+        for name in CLIENT_NAMES:
+            with self.subTest(client=name):
+                result = self.jzr("install", "--mcp", "--client", name, "--dry-run")
+
+                self.assertEqual(result.exit_code, 0, result.output)
+
+    def test_agent_codex_with_mcp_installs_the_skill_for_codex_and_still_registers_every_client(self) -> None:
+        self.make_home(".claude", ".codex")
+        self.add_codex()
+
+        result = self.jzr("install", "--mcp", "--agent", "codex")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertIn(self.installed_line(self.agents, "codex"), lines)
+        self.assertFalse(self.claude.exists())
+        self.assertEqual(self.register.call_count, 1)
+        self.assertIn(CODEX_REGISTERED, lines)
+        self.assertEqual(len(self.fakes.calls("codex")), 1)
+
+    def test_agent_does_not_pick_the_mcp_client_and_client_does_not_pick_the_skill_folder(self) -> None:
+        self.make_home(".claude", ".codex")
+        self.add_codex()
+
+        result = self.jzr("install", "--mcp", "--client", "codex")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertIn(self.installed_line(self.claude, "claude"), lines)
+        self.assertIn(self.installed_line(self.agents, "codex"), lines)
+        self.assertEqual(self.register.call_count, 0)
+        self.assertIn(CODEX_REGISTERED, lines)
+
+
+class CodexInstallTests(ClientCase):
+    def test_a_codex_on_path_is_run_with_the_add_command_and_reported(self) -> None:
+        self.make_home(".claude")
+        self.add_codex()
+
+        result = self.jzr("install", "--mcp")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(self.fakes.calls("codex"), [["mcp", "add", "jzr", "--", JZR_EXE, "agent", "mcp"]])
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines.count(CODEX_REGISTERED), 1, lines)
+        self.assertEqual(self.register.call_count, 1)
+        self.assertEqual(self.fakes.calls("code"), [])
+
+    def test_codex_runs_after_the_skill_is_installed(self) -> None:
+        self.make_home(".claude")
+        self.add_codex()
+
+        lines = self.jzr("install", "--mcp").stdout.splitlines()
+
+        self.assertLess(
+            lines.index(self.installed_line(self.claude, "claude")), lines.index(CODEX_REGISTERED)
+        )
+
+    def test_a_module_launch_is_passed_to_codex_word_by_word(self) -> None:
+        self.make_home(".claude")
+        self.add_codex()
+        self.jzr_words = ["/py/python", "-m", "jzr_tools"]
+
+        self.jzr("install", "--mcp")
+
+        self.assertEqual(
+            self.fakes.calls("codex"),
+            [["mcp", "add", "jzr", "--", "/py/python", "-m", "jzr_tools", "agent", "mcp"]],
+        )
+
+    def test_a_failing_codex_is_an_error_line_with_its_last_output_line_and_exit_1(self) -> None:
+        self.make_home(".claude")
+        self.add_codex(code=1, out="loading\n", err="error: cannot write config.toml\n")
+
+        result = self.jzr("install", "--mcp")
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("error: Codex: error: cannot write config.toml", result.stderr.splitlines())
+        self.assertNotIn(CODEX_REGISTERED, result.stdout.splitlines())
+        self.assertNotIn("Traceback", result.output)
+        self.assertTrue((self.claude / "SKILL.md").is_file())
+        self.assertEqual(self.register.call_count, 1)
+
+    def test_an_exit_zero_without_the_added_text_is_an_error_too(self) -> None:
+        self.make_home(".claude")
+        self.add_codex(code=0, out="all done\n")
+
+        result = self.jzr("install", "--mcp")
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("error: Codex: all done", result.stderr.splitlines())
+        self.assertNotIn(CODEX_REGISTERED, result.stdout.splitlines())
+
+    def test_a_codex_that_is_not_on_path_is_skipped_without_a_word(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("install", "--mcp")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertNotIn("Codex", result.output)
+        self.assertEqual(self.fakes.calls("codex"), [])
+
+    def test_client_codex_without_codex_prints_the_command_and_exits_zero(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("install", "--mcp", "--client", "codex")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        hint = [line for line in lines if "not on PATH" in line]
+        self.assertEqual(len(hint), 1, lines)
+        self.assertTrue(hint[0].startswith("Codex"), hint[0])
+        self.assertTrue(hint[0].endswith("run: " + shown(["codex", "mcp", "add", "jzr", "--", *SERVER])), hint[0])
+        self.assertEqual(self.register.call_count, 0)
+
+    def test_client_codex_handles_codex_alone(self) -> None:
+        self.make_home(".claude")
+        self.add_codex()
+        self.add_code()
+
+        result = self.jzr("install", "--mcp", "--client", "codex")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertIn(CODEX_REGISTERED, lines)
+        self.assertEqual(self.register.call_count, 0)
+        self.assertEqual(self.fakes.calls("code"), [])
+        self.assertNotIn(DESKTOP_ADD, lines)
+        self.assertNotIn(CURSOR_HEADER, lines)
+        self.assertNotIn("Claude Code", result.output)
+
+    def test_dry_run_shows_the_command_and_does_not_start_codex(self) -> None:
+        self.make_home(".claude")
+        codex = self.add_codex()
+        before = _snapshot(self.root / "home")
+
+        result = self.jzr("install", "--mcp", "--dry-run")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertIn("would run: " + shown([codex, "mcp", "add", "jzr", "--", *SERVER]), lines)
+        self.assertNotIn(CODEX_REGISTERED, lines)
+        self.assertEqual(self.fakes.calls("codex"), [])
+        self.assertEqual(_snapshot(self.root / "home"), before)
+
+
+class VscodeInstallTests(ClientCase):
+    def test_a_code_on_path_gets_the_add_mcp_json_as_one_argument(self) -> None:
+        self.make_home(".claude")
+        self.add_code()
+
+        result = self.jzr("install", "--mcp")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(result.stderr, "")
+        (call,) = self.fakes.calls("code")
+        self.assertEqual(len(call), 2, call)
+        self.assertEqual(call[0], "--add-mcp")
+        self.assertEqual(
+            json.loads(call[1]),
+            {"name": "jzr", "type": "stdio", "command": JZR_EXE, "args": ["agent", "mcp"]},
+        )
+        self.assertEqual(result.stdout.splitlines().count(VSCODE_REGISTERED), 1)
+
+    def test_a_path_with_spaces_reaches_code_intact(self) -> None:
+        self.make_home(".claude")
+        self.add_code()
+        self.jzr_words = [JZR_SPACED]
+
+        self.jzr("install", "--mcp")
+
+        (call,) = self.fakes.calls("code")
+        document = json.loads(call[1])
+        self.assertEqual(document["command"], JZR_SPACED)
+        self.assertEqual(document["args"], ["agent", "mcp"])
+
+    def test_bad_json_is_an_error_even_though_code_exits_zero(self) -> None:
+        self.make_home(".claude")
+        self.add_code(code=0, out="Invalid JSON: Unexpected token\n")
+
+        result = self.jzr("install", "--mcp")
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("error: VS Code: Invalid JSON: Unexpected token", result.stderr.splitlines())
+        self.assertNotIn(VSCODE_REGISTERED, result.stdout.splitlines())
+        self.assertNotIn("Traceback", result.output)
+
+    def test_a_code_that_is_not_on_path_is_skipped_without_a_word(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("install", "--mcp")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertNotIn("VS Code", result.output)
+        self.assertNotIn("--add-mcp", result.output)
+
+    def test_client_vscode_without_code_prints_the_command_and_exits_zero(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("install", "--mcp", "--client", "vscode")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        hint = [line for line in result.stdout.splitlines() if "not on PATH" in line]
+        self.assertEqual(len(hint), 1, result.stdout)
+        self.assertTrue(hint[0].startswith("VS Code"), hint[0])
+        self.assertIn("run: code --add-mcp ", hint[0])
+        self.assertIn("jzr", hint[0])
+        self.assertEqual(self.register.call_count, 0)
+
+    def test_client_vscode_handles_vs_code_alone(self) -> None:
+        self.make_home(".claude")
+        self.add_code()
+        self.add_codex()
+
+        result = self.jzr("install", "--mcp", "--client", "vscode")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn(VSCODE_REGISTERED, result.stdout.splitlines())
+        self.assertEqual(self.fakes.calls("codex"), [])
+        self.assertEqual(self.register.call_count, 0)
+
+    def test_dry_run_shows_the_command_and_does_not_start_code(self) -> None:
+        self.make_home(".claude")
+        code = self.add_code()
+
+        result = self.jzr("install", "--mcp", "--dry-run")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        shown_lines = [line for line in result.stdout.splitlines() if line.startswith("would run: ") and "--add-mcp" in line]
+        self.assertEqual(len(shown_lines), 1, result.stdout)
+        self.assertEqual(shown_lines[0], "would run: " + shown(self.setup_module.vscode_add_command(code, SERVER)))
+        self.assertEqual(self.fakes.calls("code"), [])
+        self.assertNotIn(VSCODE_REGISTERED, result.stdout.splitlines())
+
+
+class CursorAndDesktopInstallTests(ClientCase):
+    def test_the_cursor_entry_and_link_are_printed_without_any_cursor_folder(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("install", "--mcp")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        document, link = self.cursor_block(result.stdout)
+        entry = document.get("mcpServers", document)
+        entry = entry.get("jzr", entry)
+        self.assertEqual(entry["command"], JZR_EXE)
+        self.assertEqual(entry["args"], ["agent", "mcp"])
+        self.assertFalse((self.home / ".cursor").exists())
+
+    def test_the_link_holds_the_base64_of_the_compact_command_json(self) -> None:
+        self.make_home(".claude")
+        self.jzr_words = [JZR_SPACED]
+
+        result = self.jzr("install", "--mcp")
+
+        _document, link = self.cursor_block(result.stdout)
+        compact = json.dumps({"command": JZR_SPACED, "args": ["agent", "mcp"]}, separators=(",", ":"))
+        self.assertEqual(link, CURSOR_LINK + base64.b64encode(compact.encode("utf-8")).decode("ascii"))
+        self.assertEqual(base64.b64decode(link[len(CURSOR_LINK):], validate=True).decode("utf-8"), compact)
+
+    def test_the_desktop_entry_is_still_printed(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("install", "--mcp")
+
+        _block, document = self.desktop_block(result.stdout)
+        self.assertEqual(document["mcpServers"]["jzr"]["command"], JZR_EXE)
+
+    def test_client_cursor_prints_only_the_cursor_entry_and_runs_nothing(self) -> None:
+        self.make_home(".claude")
+        self.add_codex()
+        self.add_code()
+
+        result = self.jzr("install", "--mcp", "--client", "cursor")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertIn(CURSOR_HEADER, lines)
+        self.assertNotIn(DESKTOP_ADD, lines)
+        self.assertEqual(self.register.call_count, 0)
+        self.assertEqual(self.fakes.calls("codex"), [])
+        self.assertEqual(self.fakes.calls("code"), [])
+
+    def test_client_desktop_prints_only_the_desktop_entry(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("install", "--mcp", "--client", "desktop")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertIn(DESKTOP_ADD, lines)
+        self.assertNotIn(CURSOR_HEADER, lines)
+        self.assertEqual(self.register.call_count, 0)
+
+    def test_client_claude_prints_neither_entry(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("install", "--mcp", "--client", "claude")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertNotIn(DESKTOP_ADD, lines)
+        self.assertNotIn(CURSOR_HEADER, lines)
+        self.assertIn("registered the jzr MCP server with Claude Code", lines)
+
+    def test_a_dry_run_still_prints_the_entries_and_writes_nothing(self) -> None:
+        self.make_home(".claude")
+        before = _snapshot(self.root / "home")
+
+        result = self.jzr("install", "--mcp", "--dry-run")
+
+        lines = result.stdout.splitlines()
+        self.assertIn(CURSOR_HEADER, lines)
+        self.assertIn(DESKTOP_ADD, lines)
+        self.assertEqual(_snapshot(self.root / "home"), before)
+
+
+class ClientRemoveTests(ClientCase):
+    def test_codex_is_run_with_the_remove_command_and_reported(self) -> None:
+        self.make_home(".claude")
+        self.add_codex(out=CODEX_REMOVED)
+
+        result = self.jzr("remove", "--mcp")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.fakes.calls("codex"), [["mcp", "remove", "jzr"]])
+        self.assertEqual(result.stdout.splitlines().count(CODEX_UNREGISTERED), 1)
+
+    def test_a_codex_without_the_server_is_reported_and_is_not_an_error(self) -> None:
+        self.make_home(".claude")
+        self.add_codex(code=0, out=CODEX_ABSENT)
+
+        result = self.jzr("remove", "--mcp")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn(CODEX_NOT_REGISTERED, result.stdout.splitlines())
+        self.assertNotIn(CODEX_UNREGISTERED, result.stdout.splitlines())
+
+    def test_a_failing_codex_is_an_error_line_and_exit_1(self) -> None:
+        self.make_home(".claude")
+        self.add_codex(code=1, out="", err="error: config is locked\n")
+
+        result = self.jzr("remove", "--mcp")
+
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("error: Codex: error: config is locked", result.stderr.splitlines())
+
+    def test_a_codex_that_is_not_on_path_is_skipped_without_a_word(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("remove", "--mcp")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertNotIn("Codex", result.output)
+
+    def test_client_codex_without_codex_prints_the_command_and_exits_zero(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("remove", "--mcp", "--client", "codex")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        hint = [line for line in result.stdout.splitlines() if "not on PATH" in line]
+        self.assertEqual(len(hint), 1, result.stdout)
+        self.assertTrue(hint[0].startswith("Codex"), hint[0])
+        self.assertTrue(hint[0].endswith("run: " + shown(["codex", "mcp", "remove", "jzr"])), hint[0])
+
+    def test_dry_run_shows_the_codex_command_and_runs_nothing(self) -> None:
+        self.make_home(".claude")
+        codex = self.add_codex(out=CODEX_REMOVED)
+
+        result = self.jzr("remove", "--mcp", "--dry-run")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("would run: " + shown([codex, "mcp", "remove", "jzr"]), result.stdout.splitlines())
+        self.assertNotIn(CODEX_UNREGISTERED, result.stdout.splitlines())
+        self.assertEqual(self.fakes.calls("codex"), [])
+
+    def test_vscode_says_where_to_delete_the_entry_and_runs_nothing(self) -> None:
+        self.make_home(".claude")
+        self.add_code()
+
+        result = self.jzr("remove", "--mcp")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn(VSCODE_REMOVE, result.stdout.splitlines())
+        self.assertEqual(self.fakes.calls("code"), [])
+
+    def test_client_vscode_says_where_to_delete_the_entry_only(self) -> None:
+        self.make_home(".claude")
+        self.add_code()
+        self.add_codex()
+
+        result = self.jzr("remove", "--mcp", "--client", "vscode")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertIn(VSCODE_REMOVE, lines)
+        self.assertNotIn(DESKTOP_REMOVE, lines)
+        self.assertNotIn(CURSOR_REMOVE, lines)
+        self.assertEqual(self.fakes.calls("codex"), [])
+        self.assertEqual(self.unregister.call_count, 0)
+
+    def test_cursor_says_where_to_delete_the_entry(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("remove", "--mcp")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertIn(CURSOR_REMOVE, lines)
+        self.assertIn(DESKTOP_REMOVE, lines)
+
+    def test_client_cursor_says_only_the_cursor_line(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("remove", "--mcp", "--client", "cursor")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertIn(CURSOR_REMOVE, lines)
+        self.assertNotIn(DESKTOP_REMOVE, lines)
+        self.assertEqual(self.unregister.call_count, 0)
+
+    def test_client_desktop_says_only_the_desktop_line(self) -> None:
+        self.make_home(".claude")
+
+        result = self.jzr("remove", "--mcp", "--client", "desktop")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        lines = result.stdout.splitlines()
+        self.assertIn(DESKTOP_REMOVE, lines)
+        self.assertNotIn(CURSOR_REMOVE, lines)
+
+    def test_client_claude_unregisters_claude_alone(self) -> None:
+        self.make_home(".claude")
+        self.add_codex(out=CODEX_REMOVED)
+
+        result = self.jzr("remove", "--mcp", "--client", "claude")
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.unregister.call_count, 1)
+        self.assertEqual(self.fakes.calls("codex"), [])
+        self.assertNotIn(CURSOR_REMOVE, result.stdout.splitlines())
 
 
 class McpActionTests(McpCase):

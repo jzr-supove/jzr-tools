@@ -1,13 +1,15 @@
-"""Tell Claude Code and Claude Desktop how to start jzr's MCP server.
+"""Tell AI clients how to start jzr's MCP server.
 
-Claude Code is changed through its own command line. Claude Desktop's settings
-file is never edited; the entry to add is only shown.
+Claude Code, Codex and VS Code are changed through their own command lines.
+The settings files of Cursor and Claude Desktop are never edited; the entry to
+add is only shown.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import base64
 import importlib.util
 import json
 from pathlib import Path
@@ -76,6 +78,41 @@ def desktop_path(platform: str) -> str:
     return "~/.config/Claude/claude_desktop_config.json"
 
 
+def codex_add_command(codex: str, server: list[str]) -> list[str]:
+    return [codex, "mcp", "add", SERVER_NAME, "--", *server]
+
+
+def codex_remove_command(codex: str) -> list[str]:
+    return [codex, "mcp", "remove", SERVER_NAME]
+
+
+def vscode_add_command(code: str, server: list[str]) -> list[str]:
+    """``code --add-mcp`` with the server as one JSON argument."""
+    entry = {"name": SERVER_NAME, "type": "stdio", "command": server[0], "args": server[1:]}
+    return [code, "--add-mcp", json.dumps(entry, ensure_ascii=False)]
+
+
+def vscode_path(platform: str) -> str:
+    """Where VS Code keeps the user's MCP servers, for showing."""
+    if platform == "win32":
+        return r"%APPDATA%\Code\User\mcp.json"
+    if platform == "darwin":
+        return "~/Library/Application Support/Code/User/mcp.json"
+    return "~/.config/Code/User/mcp.json"
+
+
+def cursor_entry(server: list[str]) -> str:
+    """What ``~/.cursor/mcp.json`` needs, as JSON."""
+    return desktop_entry(server)
+
+
+def cursor_link(server: list[str]) -> str:
+    """Cursor's install link: the command as base64 of compact JSON."""
+    config = json.dumps({"command": server[0], "args": server[1:]}, separators=(",", ":"), ensure_ascii=False)
+    encoded = base64.b64encode(config.encode("utf-8")).decode("ascii")
+    return f"cursor://anysphere.cursor-deeplink/mcp/install?name={SERVER_NAME}&config={encoded}"
+
+
 def register(
     claude: str, server: list[str], *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run
 ) -> Registration:
@@ -102,22 +139,60 @@ def unregister(
     return Registration("failed", _last_line(output))
 
 
+def register_codex(
+    codex: str, server: list[str], *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run
+) -> Registration:
+    """Add the server to Codex. Codex replaces an entry of the same name."""
+    code, output = _run(codex_add_command(codex, server), run)
+    if code == 0 and "added" in output.lower():
+        return Registration("added")
+    return Registration("failed", _last_line(output))
+
+
+def unregister_codex(
+    codex: str, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run
+) -> Registration:
+    """Take the server out of Codex; Codex exits 0 when there is none."""
+    code, output = _run(codex_remove_command(codex), run)
+    said = output.lower()
+    if code == 0 and "no mcp server" in said:
+        return Registration("absent")
+    if code == 0 and "removed" in said:
+        return Registration("removed")
+    return Registration("failed", _last_line(output))
+
+
+def register_vscode(
+    code: str, server: list[str], *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run
+) -> Registration:
+    """Add the server to VS Code's user profile. VS Code exits 0 even on bad input."""
+    exit_code, output = _run(vscode_add_command(code, server), run)
+    if exit_code is not None and "added mcp servers" in output.lower():
+        return Registration("added")
+    return Registration("failed", _last_line(output))
+
+
 def _run(
     command: list[str], run: Callable[..., subprocess.CompletedProcess]
 ) -> tuple[int | None, str]:
-    """The exit code and all output; no code when the program cannot be started."""
+    """The exit code and all output, errors last; no code when the program cannot be started.
+
+    The two streams are read apart: merged, a program's buffered output can
+    arrive after its error message and hide it.
+    """
     try:
         done = run(
             command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             encoding="utf-8",
             errors="replace",
         )
     except OSError as error:
         return None, error.strerror or str(error)
-    return done.returncode, done.stdout or ""
+    out, err = done.stdout or "", done.stderr or ""
+    return done.returncode, out + ("\n" if out and err and not out.endswith("\n") else "") + err
 
 
 def _last_line(output: str) -> str:

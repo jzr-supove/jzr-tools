@@ -5,7 +5,7 @@ description: Run the jzr command line for everyday file and machine jobs. Conver
 
 # jzr
 
-One command-line tool for small everyday jobs. If `jzr --version` fails, jzr is not installed: tell the user (`uv tool install jzr-tools` or `pipx install jzr-tools`).
+One command-line tool for small everyday jobs. If `jzr --version` fails, jzr is not installed: run it without installing as `uvx --from jzr-tools jzr <command>` (needs uv), or ask the user to install it (`uv tool install jzr-tools` or `pipx install jzr-tools`).
 
 ## Commands
 

@@ -1,0 +1,15 @@
+{
+  "name": "jzr-tools",
+  "owner": {
+    "name": "JZR SUPOVE"
+  },
+  "description": "The jzr plugin: a skill and an MCP server for the jzr command line.",
+  "plugins": [
+    {
+      "name": "jzr",
+      "source": "./plugins/jzr",
+      "description": "Everyday file and machine jobs from the jzr command line: convert, compress and inspect images, video, audio and PDFs, convert data, free ports and more.",
+      "version": "0.2.0"
+    }
+  ]
+}
