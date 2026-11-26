@@ -3,14 +3,14 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/jzr-tools/"><img src="https://img.shields.io/pypi/v/jzr-tools?style=flat-square&labelColor=1c1c22&color=00ff99&label=pypi" alt="PyPI version"></a>
-  <a href="https://pepy.tech/projects/jzr-tools"><img src="https://img.shields.io/pepy/dt/jzr-tools?style=flat-square&labelColor=1c1c22&color=00ff99&label=downloads" alt="Downloads"></a>
+  <a href="https://pypi.org/project/jzr-tools/"><img src="https://img.shields.io/pypi/v/jzr-tools?style=flat-square&labelColor=1c1c22&color=22ff99&label=pypi" alt="PyPI version"></a>
+  <a href="https://pepy.tech/projects/jzr-tools"><img src="https://img.shields.io/pepy/dt/jzr-tools?style=flat-square&labelColor=1c1c22&color=22ff99&label=downloads" alt="Downloads"></a>
   <a href="https://pypi.org/project/jzr-tools/"><img src="https://img.shields.io/pypi/pyversions/jzr-tools?style=flat-square&labelColor=1c1c22&color=3c3c46" alt="Python versions"></a>
   <a href="https://github.com/jzr-supove/jzr-tools/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jzr-supove/jzr-tools/ci.yml?branch=main&style=flat-square&labelColor=1c1c22&label=tests" alt="Tests"></a>
   <img src="https://img.shields.io/badge/os-Windows%20%7C%20macOS%20%7C%20Linux-3c3c46?style=flat-square&labelColor=1c1c22" alt="Windows, macOS and Linux">
   <a href="https://github.com/jzr-supove/jzr-tools/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-3c3c46?style=flat-square&labelColor=1c1c22" alt="Apache 2.0 license"></a>
-  <a href="https://github.com/jzr-supove/jzr-tools/blob/main/docs/ai-agents.md"><img src="https://img.shields.io/badge/AI%20agents-skill%20%2B%20MCP-00ff99?style=flat-square&labelColor=1c1c22" alt="Skill and MCP server for AI agents"></a>
-  <a href="https://jzr.tools"><img src="https://img.shields.io/badge/web-jzr.tools-00ff99?style=flat-square&labelColor=1c1c22" alt="Web version at jzr.tools"></a>
+  <a href="https://github.com/jzr-supove/jzr-tools/blob/main/docs/ai-agents.md"><img src="https://img.shields.io/badge/AI%20agents-skill%20%2B%20MCP-22ff99?style=flat-square&labelColor=1c1c22" alt="Skill and MCP server for AI agents"></a>
+  <a href="https://jzr.tools"><img src="https://img.shields.io/badge/web-jzr.tools-22ff99?style=flat-square&labelColor=1c1c22" alt="Web version at jzr.tools"></a>
 </p>
 
 <p align="center">
