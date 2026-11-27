@@ -19,3 +19,6 @@ GEMINI.md
 TASKS.md
 docs/features/
 graphify-out/
+
+# Benchmark output
+bench/results/
