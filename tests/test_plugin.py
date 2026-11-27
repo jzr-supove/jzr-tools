@@ -1,4 +1,4 @@
-"""Tests for the Claude Code plugin and marketplace files that are generated from the packaged skill.
+"""Tests for the Claude Code plugin and marketplace files that are generated from the packaged skills.
 
 The committed files are compared with what the generator builds, and the
 generator is run only against temporary folders, never against this checkout.
@@ -6,6 +6,7 @@ generator is run only against temporary folders, never against this checkout.
 
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import os
@@ -24,17 +25,42 @@ REGENERATE = "run `uv run python -m jzr_tools.commands._skill_text` to regenerat
 
 MARKETPLACE = ".claude-plugin/marketplace.json"
 PLUGIN_JSON = "plugins/jzr/.claude-plugin/plugin.json"
-SKILL_DIR = "plugins/jzr/skills/jzr/"
+SKILLS_ROOT = "plugins/jzr/skills/"
+SKILL_NAMES = ("jzr-media", "jzr-pdf", "jzr-data", "jzr-system")
 DESCRIPTION = (
     "Everyday file and machine jobs from the jzr command line: convert, compress and "
     "inspect images, video, audio and PDFs, convert data, free ports and more."
 )
 REPOSITORY = "https://github.com/jzr-supove/jzr-tools"
 
+# What `_skill_text.build()` returns: skill -> {path in its folder -> text}.
 SAMPLE_SKILL = {
-    "SKILL.md": "---\nname: jzr\n---\nUse jzr é\n",
-    "reference/image.md": "# jzr image\n",
-    "reference/tools.md": "# jzr top-level commands\n",
+    "jzr-media": {
+        "SKILL.md": "---\nname: jzr-media\n---\nUse jzr é\n",
+        "reference/image.md": "# jzr image\n",
+        "reference/video.md": "# jzr video\n",
+    },
+    "jzr-pdf": {
+        "SKILL.md": "---\nname: jzr-pdf\n---\nPDF\n",
+        "reference/pdf.md": "# jzr pdf\n",
+    },
+    "jzr-data": {
+        "SKILL.md": "---\nname: jzr-data\n---\nData\n",
+        "reference/tools.md": "# jzr top-level commands\n",
+    },
+    "jzr-system": {"SKILL.md": "---\nname: jzr-system\n---\nSystem\n"},
+}
+
+
+def skill_file(skill: str, name: str) -> str:
+    """The path of one skill file from the repository root."""
+    return f"{SKILLS_ROOT}{skill}/{name}"
+
+
+SAMPLE_SKILL_FILES = {
+    skill_file(skill, name): text.encode("utf-8")
+    for skill, files in SAMPLE_SKILL.items()
+    for name, text in files.items()
 }
 
 
@@ -51,19 +77,27 @@ def _json(files: dict[str, bytes], name: str) -> dict:
 
 
 class PluginFilesTests(unittest.TestCase):
-    def test_the_keys_are_the_marketplace_the_manifest_and_a_copy_of_every_skill_file(self) -> None:
+    def test_the_keys_are_the_marketplace_the_manifest_and_a_copy_of_every_file_of_every_skill(self) -> None:
         files = _plugin().plugin_files(SAMPLE_SKILL, "9.8.7")
 
-        self.assertEqual(
-            set(files),
-            {
-                MARKETPLACE,
-                PLUGIN_JSON,
-                SKILL_DIR + "SKILL.md",
-                SKILL_DIR + "reference/image.md",
-                SKILL_DIR + "reference/tools.md",
-            },
-        )
+        self.assertEqual(set(files), {MARKETPLACE, PLUGIN_JSON, *SAMPLE_SKILL_FILES})
+        self.assertIn("plugins/jzr/skills/jzr-media/reference/video.md", files)
+        self.assertIn("plugins/jzr/skills/jzr-system/SKILL.md", files)
+
+    def test_each_skill_has_its_own_folder_and_there_is_no_folder_for_the_old_single_skill(self) -> None:
+        files = _plugin().plugin_files(SAMPLE_SKILL, "9.8.7")
+
+        folders = {name.split("/")[3] for name in files if name.startswith(SKILLS_ROOT)}
+        self.assertEqual(folders, set(SKILL_NAMES))
+        self.assertFalse([name for name in files if name.startswith(SKILLS_ROOT + "jzr/")], sorted(files))
+        self.assertNotIn(SKILLS_ROOT + "SKILL.md", files)
+
+    def test_a_file_goes_to_the_folder_of_the_skill_it_belongs_to(self) -> None:
+        files = _plugin().plugin_files(SAMPLE_SKILL, "9.8.7")
+
+        self.assertEqual(files[skill_file("jzr-pdf", "reference/pdf.md")], b"# jzr pdf\n")
+        self.assertEqual(files[skill_file("jzr-data", "reference/tools.md")], b"# jzr top-level commands\n")
+        self.assertNotIn(skill_file("jzr-pdf", "reference/image.md"), files)
 
     def test_every_value_is_bytes_with_lf_endings_only(self) -> None:
         files = _plugin().plugin_files(SAMPLE_SKILL, "9.8.7")
@@ -77,9 +111,11 @@ class PluginFilesTests(unittest.TestCase):
     def test_the_skill_files_are_copied_as_utf_8_unchanged(self) -> None:
         files = _plugin().plugin_files(SAMPLE_SKILL, "9.8.7")
 
-        for name, text in SAMPLE_SKILL.items():
-            with self.subTest(file=name):
-                self.assertEqual(files[SKILL_DIR + name], text.encode("utf-8"))
+        for skill, skill_files in SAMPLE_SKILL.items():
+            for name, text in skill_files.items():
+                with self.subTest(file=skill_file(skill, name)):
+                    self.assertEqual(files[skill_file(skill, name)], text.encode("utf-8"))
+        self.assertIn("é".encode("utf-8"), files[skill_file("jzr-media", "SKILL.md")])
 
     def test_the_manifest_has_the_agreed_fields_in_the_agreed_order(self) -> None:
         manifest = _json(_plugin().plugin_files(SAMPLE_SKILL, "9.8.7"), PLUGIN_JSON)
@@ -159,7 +195,7 @@ class PluginFilesTests(unittest.TestCase):
         )
 
     def test_the_input_is_not_changed(self) -> None:
-        skill = dict(SAMPLE_SKILL)
+        skill = copy.deepcopy(SAMPLE_SKILL)
 
         _plugin().plugin_files(skill, "9.8.7")
 
@@ -167,19 +203,32 @@ class PluginFilesTests(unittest.TestCase):
 
 
 class PluginFollowsThePackageTests(unittest.TestCase):
-    def test_the_skill_copy_is_the_built_skill(self) -> None:
+    def test_the_skill_copies_are_the_four_built_skills(self) -> None:
         built = _skill_text().build()
 
         files = _plugin().plugin_files(built, __version__)
 
-        copied = {
-            name[len(SKILL_DIR):]: content
-            for name, content in files.items()
-            if name.startswith(SKILL_DIR)
-        }
-        self.assertEqual(copied, {name: text.encode("utf-8") for name, text in built.items()})
-        self.assertIn("SKILL.md", copied)
-        self.assertTrue(any(name.startswith("reference/") for name in copied), sorted(copied))
+        copied = {name: content for name, content in files.items() if name.startswith(SKILLS_ROOT)}
+        self.assertEqual(
+            copied,
+            {
+                skill_file(skill, name): text.encode("utf-8")
+                for skill, skill_files in built.items()
+                for name, text in skill_files.items()
+            },
+        )
+        self.assertEqual(list(built), list(SKILL_NAMES))
+        for skill in SKILL_NAMES:
+            with self.subTest(skill=skill):
+                self.assertIn(skill_file(skill, "SKILL.md"), copied)
+                self.assertTrue(
+                    any(name.startswith(skill_file(skill, "reference/")) for name in copied), sorted(copied)
+                )
+
+    def test_nothing_is_copied_to_the_folder_of_the_old_single_skill(self) -> None:
+        files = _plugin().plugin_files(_skill_text().build(), __version__)
+
+        self.assertEqual([name for name in files if name.startswith(SKILLS_ROOT + "jzr/")], [])
 
     def test_the_manifest_and_the_marketplace_carry_the_package_version(self) -> None:
         files = _plugin().plugin_files(_skill_text().build(), __version__)
@@ -221,6 +270,12 @@ class CommittedPluginTests(unittest.TestCase):
 
         self.assertEqual(present, {name for name in expected if name.startswith("plugins/")}, REGENERATE)
 
+    def test_the_folder_of_the_old_single_skill_is_gone(self) -> None:
+        self.assertFalse((PROJECT_ROOT / "plugins" / "jzr" / "skills" / "jzr").exists(), REGENERATE)
+        for skill in SKILL_NAMES:
+            with self.subTest(skill=skill):
+                self.assertTrue((PROJECT_ROOT / skill_file(skill, "SKILL.md")).is_file(), REGENERATE)
+
 
 class PluginWriteTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -228,6 +283,13 @@ class PluginWriteTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name).resolve()
         self.files = _plugin().plugin_files(SAMPLE_SKILL, "9.8.7")
+
+    def _tree(self) -> dict[str, bytes]:
+        return {
+            path.relative_to(self.root).as_posix(): path.read_bytes()
+            for path in self.root.rglob("*")
+            if path.is_file()
+        }
 
     def test_write_creates_every_file_under_the_given_root_and_lists_them(self) -> None:
         changed = _plugin().write(self.root, self.files)
@@ -270,6 +332,83 @@ class PluginWriteTests(unittest.TestCase):
         self.assertEqual(manifest.read_bytes(), self.files[PLUGIN_JSON])
         self.assertEqual((self.root / MARKETPLACE).read_bytes(), self.files[MARKETPLACE])
         self.assertEqual(stray.read_text(encoding="utf-8"), "keep me\n")
+
+    def test_a_file_under_the_skills_folder_that_is_no_longer_built_is_deleted(self) -> None:
+        _plugin().write(self.root, self.files)
+        old_skill = self.root / skill_file("jzr", "SKILL.md")
+        old_skill.parent.mkdir(parents=True)
+        old_skill.write_text("the old single skill\n", encoding="utf-8")
+        old_reference = self.root / skill_file("jzr", "reference/image.md")
+        old_reference.parent.mkdir(parents=True)
+        old_reference.write_text("old\n", encoding="utf-8")
+        gone = self.root / skill_file("jzr-media", "reference/gone.md")
+        gone.write_text("a group that moved away\n", encoding="utf-8")
+        wrong_skill = self.root / skill_file("jzr-pdf", "reference/image.md")
+        wrong_skill.write_text("belongs to jzr-media\n", encoding="utf-8")
+
+        _plugin().write(self.root, self.files)
+
+        for path in (old_skill, old_reference, gone, wrong_skill):
+            with self.subTest(path=path.relative_to(self.root).as_posix()):
+                self.assertFalse(path.exists())
+        self.assertEqual(self._tree(), self.files)
+
+    def test_a_skill_that_is_no_longer_built_loses_all_its_files(self) -> None:
+        _plugin().write(self.root, self.files)
+        fewer = {
+            name: content for name, content in self.files.items() if not name.startswith(SKILLS_ROOT + "jzr-pdf/")
+        }
+        self.assertLess(len(fewer), len(self.files))
+
+        _plugin().write(self.root, fewer)
+
+        self.assertEqual(self._tree(), fewer)
+        self.assertFalse((self.root / skill_file("jzr-pdf", "SKILL.md")).exists())
+
+    def test_deleting_stale_files_leaves_every_file_outside_the_skills_folder_alone(self) -> None:
+        _plugin().write(self.root, self.files)
+        outside = {
+            "plugins/jzr/notes.txt": "keep me\n",
+            "plugins/jzr/.claude-plugin/other.json": "{}\n",
+            ".claude-plugin/readme.txt": "keep me too\n",
+            "plugins/other/skills/jzr/SKILL.md": "another plugin\n",
+            "README.md": "root\n",
+        }
+        for name, text in outside.items():
+            path = self.root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        stale = self.root / skill_file("jzr", "SKILL.md")
+        stale.parent.mkdir(parents=True)
+        stale.write_text("old\n", encoding="utf-8")
+
+        _plugin().write(self.root, self.files)
+
+        self.assertFalse(stale.exists())
+        for name, text in outside.items():
+            with self.subTest(file=name):
+                self.assertEqual((self.root / name).read_text(encoding="utf-8"), text)
+
+    def test_a_current_tree_with_a_stale_file_changes_only_what_is_stale(self) -> None:
+        _plugin().write(self.root, self.files)
+        before = {
+            name: (path.read_bytes(), path.stat().st_mtime_ns)
+            for name in self.files
+            for path in [self.root / name]
+        }
+        stale = self.root / skill_file("jzr", "SKILL.md")
+        stale.parent.mkdir(parents=True)
+        stale.write_text("old\n", encoding="utf-8")
+
+        changed = _plugin().write(self.root, self.files)
+
+        # Whether a deleted file is listed among the changed ones is not fixed; a rewrite of a current file is.
+        self.assertEqual({Path(p).resolve() for p in changed} - {stale.resolve()}, set())
+        for name, state in before.items():
+            with self.subTest(file=name):
+                path = self.root / name
+                self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), state)
+        self.assertFalse(stale.exists())
 
     def test_a_file_that_a_windows_checkout_gave_crlf_endings_counts_as_current(self) -> None:
         _plugin().write(self.root, self.files)
@@ -318,9 +457,11 @@ class GeneratorScriptTests(unittest.TestCase):
         done = self.run_script()
 
         self.assertEqual(done.returncode, 0, done.stderr)
-        for name in (MARKETPLACE, PLUGIN_JSON, SKILL_DIR + "SKILL.md"):
+        names = [MARKETPLACE, PLUGIN_JSON, *(skill_file(skill, "SKILL.md") for skill in SKILL_NAMES)]
+        for name in names:
             with self.subTest(file=name):
                 self.assertTrue((self.repo / name).is_file(), done.stdout + done.stderr)
+        self.assertFalse((self.repo / "plugins" / "jzr" / "skills" / "jzr").exists())
         printed = done.stdout.replace("\\", "/")
         self.assertIn("plugin.json", printed)
         self.assertIn("marketplace.json", printed)
@@ -331,9 +472,33 @@ class GeneratorScriptTests(unittest.TestCase):
         self.assertEqual(self.run_script().returncode, 0)
 
         expected = _plugin().plugin_files(_skill_text().build(), __version__)
+        self.assertGreater(len(expected), 2 + len(SKILL_NAMES))
         for name, content in expected.items():
             with self.subTest(file=name):
                 self.assertEqual((self.repo / name).read_bytes(), content)
+
+    def test_it_deletes_the_old_single_skill_and_stale_files_from_the_plugin_and_the_packaged_skills(self) -> None:
+        (self.repo / "pyproject.toml").write_text('[project]\nname = "x"\n', encoding="utf-8")
+        skills = self.repo / "src" / "jzr_tools" / "data" / "skill"
+        stale = [
+            self.repo / skill_file("jzr", "SKILL.md"),
+            self.repo / skill_file("jzr-media", "reference/gone.md"),
+            skills / "jzr-pdf" / "reference" / "gone.md",
+            skills / "jzr-system" / "notes.txt",
+        ]
+        for path in stale:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("stale\n", encoding="utf-8")
+        template = (skills / "template.md").read_bytes()
+
+        done = self.run_script()
+
+        self.assertEqual(done.returncode, 0, done.stderr)
+        for path in stale:
+            with self.subTest(file=path.relative_to(self.repo).as_posix()):
+                self.assertFalse(path.exists(), done.stdout + done.stderr)
+        self.assertEqual((skills / "template.md").read_bytes(), template)
+        self.assertFalse((skills / "jzr").exists())
 
     def test_a_second_run_reports_that_everything_is_up_to_date(self) -> None:
         (self.repo / "pyproject.toml").write_text('[project]\nname = "x"\n', encoding="utf-8")

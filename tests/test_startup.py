@@ -1434,10 +1434,23 @@ class AgentStartupTests(_ObservedTestCase):
         )
 
     def test_skill_prints_the_skill_without_loading_other_commands_or_the_generator(self) -> None:
-        obs = self.run_cli("agent", "skill")
+        obs = self.run_cli("agent", "skill", "jzr-media")
         self.assert_ok(obs)
         self.assertTrue(obs.stdout.startswith("---"), obs.describe())
-        self.assertIn("name: jzr", obs.stdout)
+        self.assertIn("name: jzr-media", obs.stdout)
+        self.assert_not_loaded(
+            obs,
+            OTHER_COMMAND_MODULES
+            + ["jzr_tools.commands._skill_text", "jzr_tools.commands._skill_examples"]
+            + HEAVY_MODULES
+            + MCP_MODULES,
+        )
+
+    def test_the_skill_list_loads_neither_other_commands_nor_the_generator(self) -> None:
+        obs = self.run_cli("agent", "skill")
+        self.assert_ok(obs)
+        for name in ("jzr-media", "jzr-pdf", "jzr-data", "jzr-system"):
+            self.assertIn(f"{name}: ", obs.stdout)
         self.assert_not_loaded(
             obs,
             OTHER_COMMAND_MODULES
@@ -1466,7 +1479,7 @@ class AgentStartupTests(_ObservedTestCase):
     def test_a_dry_run_install_without_mcp_loads_no_mcp_code(self) -> None:
         obs = self.run_cli("agent", "install", "--project", "--dry-run")
         self.assert_ok(obs)
-        self.assertIn("would install jzr skill", obs.stdout)
+        self.assertIn("would install jzr-media skill", obs.stdout)
         self.assert_not_loaded(obs, MCP_MODULES)
         self.assert_no_prefix_loaded(obs, ["mcp."])
 

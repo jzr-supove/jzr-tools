@@ -1,10 +1,10 @@
-"""Build the Claude Code plugin and marketplace files from the packaged skill.
+"""Build the Claude Code plugin and marketplace files from the packaged skills.
 
 The files are committed at the root of the repository, so that
 ``claude plugin marketplace add jzr-supove/jzr-tools`` finds them; a test
-fails when they no longer match the skill or the version.
+fails when they no longer match the skills or the version.
 ``python -m jzr_tools.commands._skill_text`` writes them together with the
-skill.
+skills.
 """
 
 from __future__ import annotations
@@ -25,7 +25,8 @@ MARKETPLACE_DESCRIPTION = "The jzr plugin: a skill and an MCP server for the jzr
 
 MARKETPLACE_FILE = ".claude-plugin/marketplace.json"
 PLUGIN_FILE = f"plugins/{PLUGIN}/.claude-plugin/plugin.json"
-SKILL_FOLDER = f"plugins/{PLUGIN}/skills/jzr/"
+# Holds one folder for each skill; a file in it that is not built is deleted.
+SKILLS_FOLDER = f"plugins/{PLUGIN}/skills/"
 
 
 def _json(document: dict) -> bytes:
@@ -40,8 +41,8 @@ def server(version: str) -> dict[str, object]:
     }
 
 
-def plugin_files(skill: dict[str, str], version: str) -> dict[str, bytes]:
-    """Every plugin file by its path from the repository root; ``skill`` is ``_skill_text.build()``."""
+def plugin_files(skills: dict[str, dict[str, str]], version: str) -> dict[str, bytes]:
+    """Every plugin file by its path from the repository root; ``skills`` is ``_skill_text.build()``."""
     manifest = {
         "name": PLUGIN,
         "version": version,
@@ -67,13 +68,27 @@ def plugin_files(skill: dict[str, str], version: str) -> dict[str, bytes]:
         ],
     }
     files = {MARKETPLACE_FILE: _json(marketplace), PLUGIN_FILE: _json(manifest)}
-    for name, text in skill.items():
-        files[SKILL_FOLDER + name] = text.encode("utf-8")
+    for skill, texts in skills.items():
+        for name, text in texts.items():
+            files[f"{SKILLS_FOLDER}{skill}/{name}"] = text.encode("utf-8")
     return files
 
 
 def write(root: Path, files: dict[str, bytes]) -> list[Path]:
-    """Bring the files under ``root`` up to date; the ones that changed. Others are left alone."""
+    """Bring the files under ``root`` up to date; the ones that changed or were deleted.
+
+    A file under the skills folder that is not in ``files`` is deleted; files
+    anywhere else are left alone.
+    """
+    return sync(root, files, root / SKILLS_FOLDER)
+
+
+def sync(root: Path, files: dict[str, bytes], owned: Path) -> list[Path]:
+    """Write ``files`` (paths from ``root``) and delete every other file inside ``owned``.
+
+    A file whose only difference is CRLF line endings counts as current.
+    Returns the files written, then the ones deleted.
+    """
     changed = []
     for name, content in files.items():
         path = root / name
@@ -82,6 +97,16 @@ def write(root: Path, files: dict[str, bytes]) -> list[Path]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
         changed.append(path)
+    if not owned.is_dir():
+        return changed
+    for path in sorted(owned.rglob("*")):
+        if path.is_file() and path.relative_to(root).as_posix() not in files:
+            path.unlink()
+            changed.append(path)
+    # Deepest first, so a folder emptied by the loop above goes too.
+    for folder in sorted((p for p in owned.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+        if not any(folder.iterdir()):
+            folder.rmdir()
     return changed
 
 

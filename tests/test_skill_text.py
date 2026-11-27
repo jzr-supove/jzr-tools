@@ -1,4 +1,4 @@
-"""Tests for the generated skill texts, the worked examples and the packaged skill folder.
+"""Tests for the generated skill texts, the worked examples and the packaged skill folders.
 
 The Click tree is walked here on its own, so the code under test is checked
 against the real commands and not against itself.
@@ -6,6 +6,7 @@ against the real commands and not against itself.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import importlib
 import importlib.metadata
 import json
@@ -23,7 +24,39 @@ import click
 import jzr_tools
 from jzr_tools.cli import app
 
-PACKAGED = Path(jzr_tools.__file__).resolve().parent / "data" / "skill" / "jzr"
+SKILLS_DIR = Path(jzr_tools.__file__).resolve().parent / "data" / "skill"
+OLD_SKILL = SKILLS_DIR / "jzr"
+TEMPLATE = SKILLS_DIR / "template.md"
+SKILL_NAMES = ("jzr-media", "jzr-pdf", "jzr-data", "jzr-system")
+# The reference files (groups) of each skill, as the spec lists them.
+GROUPS = {
+    "jzr-media": ["image", "video", "audio", "ffmpeg"],
+    "jzr-pdf": ["pdf"],
+    "jzr-data": ["data", "text", "tools", "random", "env", "file"],
+    "jzr-system": ["port", "host", "bind", "completion"],
+}
+DESCRIPTIONS = {
+    "jzr-media": (
+        "Run the jzr command line for image, video and audio files. Convert, compress, resize, trim or "
+        "inspect images, video and audio; make GIFs; edit audio tags. Use it instead of ffmpeg or Pillow "
+        "scripts."
+    ),
+    "jzr-pdf": (
+        "Run the jzr command line for PDF files. Merge, split, reorder, rotate or remove pages; pull out "
+        "text or images; show page counts and sizes. Use it instead of pypdf scripts or Ghostscript."
+    ),
+    "jzr-data": (
+        "Run the jzr command line for data, text and file jobs. Convert JSON, YAML, CSV, TOML and Excel "
+        "data; rename files; hash files; encode, diff or slug text; read JWTs; convert timestamps; make "
+        "UUIDs or passwords."
+    ),
+    "jzr-system": (
+        "Run the jzr command line for machine jobs. Find or free a port, see what holds it, clean caches, "
+        "and set up shell completion."
+    ),
+}
+# Acceptance criterion 2: each built SKILL.md is smaller (in characters) than the bench's split skill was.
+SIZE_LIMITS = {"jzr-media": 6010, "jzr-pdf": 4118, "jzr-data": 6154, "jzr-system": 4603}
 LEFT_OUT = frozenset({"agent", "version", "killport"})
 TOOLS_TITLE = "# jzr top-level commands"
 REGENERATE = "run `python -m jzr_tools.commands._skill_text` to regenerate the skill files"
@@ -88,8 +121,6 @@ SHARED_OPTIONS = frozenset(
 )
 # Click's own words for numbers; the list shortens each of them to N.
 NUMERIC_METAVARS = frozenset({"INTEGER", "INTEGER RANGE", "FLOAT", "FLOAT RANGE"})
-# What may stand between the short help and the arguments, and between two of them.
-SEPARATORS = r"[\s.,;:|\u00b7-]*"
 
 
 def _own_items(command: click.Command, ctx: click.Context) -> list[str]:
@@ -115,16 +146,6 @@ def _own_items(command: click.Command, ctx: click.Context) -> list[str]:
         metavar = "N" if metavar in NUMERIC_METAVARS else metavar
         options.append(f"{longest} {metavar}" if metavar else longest)
     return [*arguments, *options]
-
-
-def _expected_lines() -> dict[str, list[tuple[str, str, list[str]]]]:
-    """For each reference stem: (path, "- `jzr path` - short help", own items) in CLI order."""
-    by_stem: dict[str, list[tuple[str, str, list[str]]]] = {}
-    for names, command, ctx in _walk():
-        path = " ".join(names)
-        head = f"- `jzr {path}` - {command.get_short_help_str(limit=300)}"
-        by_stem.setdefault(_stem(names), []).append((path, head, _own_items(command, ctx)))
-    return by_stem
 
 
 def _help_variants(ctx_names: tuple[str, ...]) -> set[str]:
@@ -203,10 +224,7 @@ class EntriesTests(SkillTextCase):
         self.assertTrue((Path(self.config.name) / "bindings.json").is_file())
 
         self.assertFalse(any(entry.names[0] == "mybinding" for entry in module.entries()))
-        self.assertNotIn("mybinding", module.command_map())
-        for name, text in module.build().items():
-            with self.subTest(file=name):
-                self.assertNotIn("mybinding", text)
+        self.assertNotIn("mybinding", module.command_map(sorted({e.group for e in module.entries()})))
 
     def test_path_property_joins_the_names_and_group_is_the_reference_stem(self) -> None:
         for entry in _text().entries():
@@ -272,97 +290,251 @@ class HelpTextTests(SkillTextCase):
                     self.assertEqual(_text().help_text(entry), reference[entry.path], entry.path)
 
 
+
+class OwnOptionsTests(SkillTextCase):
+    def test_it_is_the_arguments_then_the_options_as_help_lists_them_without_the_shared_ones(self) -> None:
+        commands = {" ".join(names): (command, ctx) for names, command, ctx in _walk()}
+
+        for entry in _text().entries():
+            with self.subTest(path=entry.path):
+                command, ctx = commands[entry.path]
+                self.assertEqual(_text().own_options(entry), _own_items(command, ctx))
+
+    def test_some_commands_are_pinned(self) -> None:
+        by_path = {entry.path: entry for entry in _text().entries()}
+
+        self.assertEqual(_text().own_options(by_path["image formats"]), [])
+        self.assertEqual(_text().own_options(by_path["pdf merge"]), ["[FILES]..."])
+        self.assertEqual(
+            _text().own_options(by_path["pdf organize"]),
+            ["FILE", "--order PAGES", "--delete PAGES", "--rotate [PAGES:]ANGLE"],
+        )
+        self.assertEqual(_text().own_options(by_path["uuid"])[:2], ["--count N", "--v7"])
+        self.assertEqual(_text().SHARED_OPTIONS, SHARED_OPTIONS)
+
+
+def _help_order() -> list[str]:
+    """The groups in the order `jzr --help` lists them, from the real tree."""
+    seen: list[str] = []
+    for names, _command, _ctx in _walk():
+        if _stem(names) not in seen:
+            seen.append(_stem(names))
+    return seen
+
+
+def _span(path: str, command: click.Command, ctx: click.Context) -> str:
+    """The one code span of a list line: the command, then its own arguments and options."""
+    return " ".join([f"jzr {path}", *_own_items(command, ctx)])
+
+
+def _expected_blocks(groups: Iterable[str]) -> list[tuple[str, list[str]]]:
+    """(heading, lines) of the command list for ``groups``, in `jzr --help` order, from the real tree."""
+    wanted = set(groups)
+    by_stem: dict[str, list[str]] = {}
+    for names, command, ctx in _walk():
+        line = f"- `{_span(' '.join(names), command, ctx)}` - {command.get_short_help_str(limit=300)}"
+        by_stem.setdefault(_stem(names), []).append(line)
+    return [(f"### {stem}", by_stem[stem]) for stem in _help_order() if stem in wanted]
+
+
+def _parse_blocks(text: str) -> list[tuple[str, list[str]]]:
+    """Split a command list into (heading, lines); a line before the first heading is an error."""
+    blocks: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        if line.startswith("### "):
+            blocks.append((line, []))
+        else:
+            if not blocks:
+                raise AssertionError(f"a line before any heading: {line!r}")
+            blocks[-1][1].append(line)
+    return blocks
+
+
+def _path_of(line: str) -> str:
+    """The command path of a list line: the longest real path the span starts with."""
+    span = line.split("`")[1]
+    paths = [" ".join(names) for names, _command, _ctx in _walk()]
+    return max((p for p in paths if span == f"jzr {p}" or span.startswith(f"jzr {p} ")), key=len)
+
+
+def _all_lines(text: str) -> dict[str, str]:
+    """The list lines of a command list by command path."""
+    return {_path_of(line): line for line in text.splitlines() if line.startswith("- `jzr ")}
+
+
+def _spans(text: str) -> list[str]:
+    return [line.split("`")[1] for line in text.splitlines() if line.startswith("- `jzr ")]
+
+
+class SkillsTests(SkillTextCase):
+    def test_the_four_skills_in_the_agreed_order(self) -> None:
+        self.assertEqual(list(_text().SKILLS), list(SKILL_NAMES))
+
+    def test_the_order_is_the_one_of_the_installer(self) -> None:
+        from jzr_tools.core import skill
+
+        self.assertEqual(tuple(_text().SKILLS), tuple(skill.SKILL_NAMES))
+
+    def test_each_skill_has_the_agreed_groups_in_the_agreed_order(self) -> None:
+        for name, groups in GROUPS.items():
+            with self.subTest(skill=name):
+                self.assertEqual(list(_text().SKILLS[name].groups), groups)
+
+    def test_each_skill_has_the_agreed_description(self) -> None:
+        for name, description in DESCRIPTIONS.items():
+            with self.subTest(skill=name):
+                self.assertEqual(_text().SKILLS[name].description, description)
+
+    def test_every_group_of_the_command_tree_belongs_to_exactly_one_skill(self) -> None:
+        owners: dict[str, list[str]] = {}
+        for name, skill in _text().SKILLS.items():
+            for group in skill.groups:
+                owners.setdefault(group, []).append(name)
+
+        self.assertEqual(set(owners), set(_help_order()))
+        self.assertEqual(set(owners), {entry.group for entry in _text().entries()})
+        for group, names in owners.items():
+            with self.subTest(group=group):
+                self.assertEqual(len(names), 1, names)
+
+    def test_a_group_that_belongs_to_no_skill_fails_the_build_and_the_error_names_it(self) -> None:
+        module = _text()
+        extra = module.Entry(("zzzgroup", "go"), click.Command("go", help="Go."))
+        listed = [*module.entries(), extra]
+
+        with (
+            mock.patch.object(module, "entries", lambda: listed),
+            mock.patch("jzr_tools.commands._tree.entries", lambda: listed),
+            self.assertRaises(ValueError) as caught,
+        ):
+            module.build()
+
+        self.assertIn("zzzgroup", str(caught.exception))
+
+    def test_the_real_tree_builds_so_the_error_above_comes_from_the_extra_group(self) -> None:
+        self.assertEqual(list(_text().build()), list(SKILL_NAMES))
+
+
 class CommandMapTests(SkillTextCase):
-    def _parse(self) -> list[tuple[str, list[str]]]:
-        blocks: list[tuple[str, list[str]]] = []
-        for line in _text().command_map().splitlines():
-            if not line.strip():
-                continue
-            if line.startswith("### "):
-                blocks.append((line, []))
-            else:
-                self.assertTrue(blocks, f"a line before any heading: {line!r}")
-                blocks[-1][1].append(line)
-        return blocks
+    def test_one_plain_heading_per_requested_group_in_help_order_whatever_the_order_asked_for(self) -> None:
+        request = ["completion", "pdf", "image", "tools"]
+        in_help_order = [group for group in _help_order() if group in request]
+        self.assertNotEqual(request, in_help_order)
 
-    def test_one_heading_per_stem_that_links_its_reference_file(self) -> None:
-        stems = {entry.group for entry in _text().entries()}
+        headings = [heading for heading, _lines in _parse_blocks(_text().command_map(request))]
 
-        headings = [heading for heading, _lines in self._parse()]
+        self.assertEqual(headings, [f"### {group}" for group in in_help_order])
+        self.assertEqual(headings, ["### image", "### pdf", "### tools", "### completion"])
 
-        self.assertEqual(len(headings), len(stems))
-        found = set()
-        for heading in headings:
-            match = re.fullmatch(r"### (\S+) \(\[reference/(\S+)\.md\]\(reference/(\S+)\.md\)\)", heading)
-            self.assertIsNotNone(match, heading)
-            self.assertEqual(match.group(1), match.group(2))
-            self.assertEqual(match.group(2), match.group(3))
-            found.add(match.group(1))
-        self.assertEqual(found, stems)
+    def test_headings_no_longer_link_the_reference_file(self) -> None:
+        text = _text().command_map(_help_order())
 
-    def test_the_compress_commands_say_they_can_reach_a_target_size(self) -> None:
-        lines = _text().command_map().splitlines()
-        for path in ("image compress", "video compress"):
-            with self.subTest(path=path):
-                (line,) = [line for line in lines if line.startswith(f"- `jzr {path}` ")]
-                self.assertIn("target size", line)
+        self.assertNotIn("reference/", text)
+        self.assertNotIn("](", "".join(heading for heading, _lines in _parse_blocks(text)))
 
-    def test_each_command_has_one_line_with_its_short_help_and_its_own_options_under_its_own_heading(
-        self,
-    ) -> None:
-        actual = {heading.split()[1]: lines for heading, lines in self._parse()}
-        expected = _expected_lines()
+    def test_only_the_requested_groups_are_listed(self) -> None:
+        text = _text().command_map(["pdf"])
 
-        self.assertEqual(list(actual), list(expected))
+        self.assertEqual([heading for heading, _lines in _parse_blocks(text)], ["### pdf"])
+        paths = list(_all_lines(text))
+        self.assertEqual(paths, [" ".join(e.names) for e in _text().entries() if e.group == "pdf"])
+        self.assertGreater(len(paths), 5)
+        for other in ("image", "video", "port", "random"):
+            self.assertNotIn(f"jzr {other} ", text)
+
+    def test_a_group_with_a_single_word_path_is_listed_with_its_top_level_commands(self) -> None:
+        text = _text().command_map(["tools"])
+
+        self.assertEqual(
+            list(_all_lines(text)), [e.path for e in _text().entries() if e.group == "tools"]
+        )
+        self.assertIn("uuid", _all_lines(text))
+
+    def test_a_tuple_of_groups_works_as_well_as_a_list(self) -> None:
+        self.assertEqual(
+            _text().command_map(("port", "bind")), _text().command_map(["port", "bind"])
+        )
+
+    def test_the_commands_are_in_the_order_of_the_help_under_each_heading(self) -> None:
+        blocks = _parse_blocks(_text().command_map(GROUPS["jzr-data"]))
+
+        self.assertEqual(
+            [heading for heading, _lines in blocks],
+            [f"### {g}" for g in _help_order() if g in GROUPS["jzr-data"]],
+        )
+        for heading, lines in blocks:
+            with self.subTest(group=heading):
+                group = heading.removeprefix("### ")
+                expected = [e.path for e in _text().entries() if e.group == group]
+                self.assertEqual([_path_of(line) for line in lines], expected)
+
+    def test_each_line_is_one_code_span_with_the_command_and_its_own_options_then_the_short_help(self) -> None:
         shown = 0
-        for stem, wanted in expected.items():
-            self.assertEqual(len(actual[stem]), len(wanted), stem)
-            for line, (path, head, items) in zip(actual[stem], wanted):
-                with self.subTest(path=path):
-                    self.assertTrue(line.startswith(head), f"{line!r} does not start with {head!r}")
-                    rest = line[len(head):]
-                    found = re.findall(r"`([^`]+)`", rest)
-                    self.assertEqual(found, items)
-                    self.assertRegex(re.sub(r"`[^`]+`", "", rest), f"^{SEPARATORS}$")
-                    shown += len(found)
-        # Without this the loop could pass over a list that shows nothing at all.
-        self.assertGreater(shown, 150)
+        for name, groups in GROUPS.items():
+            with self.subTest(skill=name):
+                actual = _parse_blocks(_text().command_map(groups))
+                expected = _expected_blocks(groups)
+
+                self.assertEqual(actual, expected)
+                shown += sum(len(lines) for _heading, lines in expected)
+        # Without this the loop could pass over lists that show nothing at all.
+        self.assertEqual(shown, len(_walk()))
+
+    def test_the_whole_tree_in_one_call_lists_every_command_once(self) -> None:
+        lines = _all_lines(_text().command_map(_help_order()))
+
+        # One heading per group, so the commands of a group that is spread over the help come together.
+        expected = [e.path for group in _help_order() for e in _text().entries() if e.group == group]
+        self.assertEqual(list(lines), expected)
+        self.assertEqual(sorted(lines), sorted(" ".join(names) for names, _c, _x in _walk()))
 
     def test_the_options_of_some_commands_are_pinned_to_the_agreed_shape(self) -> None:
-        lines = {
-            line.split("`")[1].removeprefix("jzr "): line
-            for line in _text().command_map().splitlines()
-            if line.startswith("- `jzr ")
-        }
         pinned = {
             # From the spec: arguments first, then the options in the order `-h` lists them.
-            "video gif": ["[SOURCES]...", "--start TIME", "--end TIME", "--duration TIME", "--width N", "--fps N"],
+            "video gif": "[SOURCES]... --start TIME --end TIME --duration TIME --width N --fps N",
             # Choices stay, the batch options are left out, numbers become N.
-            "image compress": [
-                "[SOURCES]...", "--to [jpg|png|webp|avif|heic]", "--quality N", "--size SIZE",
-                "--max-side N", "--strip", "--background COLOR",
-            ],
-            "uuid": ["--count N", "--v7", "--upper", "--no-hyphens", "--copy"],
-            "text slug": ["[TEXT]", "--separator TEXT", "--preserve-case", "--include-date", "--copy"],
-            "random int": ["[MIN MAX]", "--count N", "--unique"],
-            "audio tags": [
-                "FILES...", "--json", "--set KEY=VALUE", "--unset KEY", "--clear", "--cover IMAGE",
-                "--no-cover", "--lyrics FILE", "--export-cover FILE",
-            ],
-            "pdf split": ["FILE", "--every N", "--pages GROUPS"],
-            "data convert": [
-                "[FILE]", "--from [json|jsonl|yaml|csv|toml|xlsx]", "--to [json|jsonl|yaml|csv|toml|xlsx]",
-                "--delimiter [,|;|tab||]", "--no-header", "--header-row N", "--types", "--nest",
-                "--sheet NAME", "--indent N", "--minify",
-            ],
+            "image compress": (
+                "[SOURCES]... --to [jpg|png|webp|avif|heic] --quality N --size SIZE --max-side N --strip "
+                "--background COLOR"
+            ),
+            "uuid": "--count N --v7 --upper --no-hyphens --copy",
+            "text slug": "[TEXT] --separator TEXT --preserve-case --include-date --copy",
+            "random int": "[MIN MAX] --count N --unique",
+            "audio tags": (
+                "FILES... --json --set KEY=VALUE --unset KEY --clear --cover IMAGE --no-cover --lyrics FILE "
+                "--export-cover FILE"
+            ),
+            "pdf split": "FILE --every N --pages GROUPS",
+            "pdf organize": "FILE --order PAGES --delete PAGES --rotate [PAGES:]ANGLE",
+            "pdf merge": "[FILES]...",
+            "data convert": (
+                "[FILE] --from [json|jsonl|yaml|csv|toml|xlsx] --to [json|jsonl|yaml|csv|toml|xlsx] "
+                "--delimiter [,|;|tab||] --no-header --header-row N --types --nest --sheet NAME --indent N "
+                "--minify"
+            ),
         }
-        for path, items in pinned.items():
+        lines = _all_lines(_text().command_map(_help_order()))
+        for path, rest in pinned.items():
             with self.subTest(path=path):
-                # The first backticked word is the command itself; none of these short helps has one.
-                self.assertEqual(re.findall(r"`([^`]+)`", lines[path])[1:], items)
+                self.assertEqual(lines[path].split("`")[1], f"jzr {path} {rest}")
 
-    def test_a_command_with_nothing_of_its_own_to_list_keeps_the_plain_line(self) -> None:
-        lines = _text().command_map().splitlines()
+    def test_the_spec_example_for_pdf_organize_is_the_line_as_written(self) -> None:
+        lines = _all_lines(_text().command_map(["pdf"]))
+
+        self.assertEqual(
+            lines["pdf organize"],
+            "- `jzr pdf organize FILE --order PAGES --delete PAGES --rotate [PAGES:]ANGLE` - "
+            "Reorder, rotate or remove the pages of a PDF.",
+        )
+        self.assertEqual(
+            lines["pdf merge"], "- `jzr pdf merge [FILES]...` - Join PDF files into one, in the order given."
+        )
+
+    def test_a_command_with_nothing_of_its_own_to_list_has_only_its_path_in_the_span(self) -> None:
+        text = _text().command_map(_help_order())
+        lines = text.splitlines()
         for line in (
             "- `jzr image formats` - Show supported extensions and the conversion engines available.",
             "- `jzr bind path` - Print where the bindings are stored.",
@@ -373,198 +545,200 @@ class CommandMapTests(SkillTextCase):
                 self.assertIn(line, lines)
 
     def test_the_shared_batch_options_and_help_are_never_listed(self) -> None:
-        listed = [
-            item
-            for line in _text().command_map().splitlines()
-            if line.startswith("- `jzr ")
-            for item in re.findall(r"`([^`]+)`", line)[1:]
-        ]
-        self.assertGreater(len(listed), 150)
-        for item in listed:
-            with self.subTest(item=item):
-                self.assertNotIn(item.split()[0], SHARED_OPTIONS)
-                self.assertNotIn(item.split()[0], {"-h"})
+        tokens = [token for span in _spans(_text().command_map(_help_order())) for token in span.split()]
+
+        self.assertGreater(len([t for t in tokens if t.startswith("--")]), 150)
+        for token in tokens:
+            with self.subTest(token=token):
+                self.assertNotIn(token, SHARED_OPTIONS)
+                self.assertNotIn(token, {"-h"})
 
     def test_numeric_click_types_are_written_as_n_and_choices_are_kept(self) -> None:
-        listed = [
-            item
-            for line in _text().command_map().splitlines()
-            if line.startswith("- `jzr ")
-            for item in re.findall(r"`([^`]+)`", line)[1:]
-        ]
-        for item in listed:
+        spans = _spans(_text().command_map(_help_order()))
+
+        for span in spans:
+            with self.subTest(span=span):
+                self.assertNotRegex(span, r"\b(INTEGER|FLOAT)\b")
+        joined = "\n".join(spans)
+        for item in ("--quality N", "--count N", "--fps N", "--quality [high|balanced|small]"):
             with self.subTest(item=item):
-                self.assertNotRegex(item, r"\b(INTEGER|FLOAT)\b")
-        self.assertIn("--quality N", listed)
-        self.assertIn("--count N", listed)
-        self.assertIn("--fps N", listed)
-        self.assertIn("--quality [high|balanced|small]", listed)
+                self.assertIn(item, joined)
 
     def test_an_option_shows_its_longest_name_and_no_metavar_when_it_is_a_flag(self) -> None:
-        line = next(
-            text for text in _text().command_map().splitlines() if text.startswith("- `jzr text slug`")
-        )
+        span = _all_lines(_text().command_map(["text"]))["text slug"].split("`")[1]
 
-        self.assertIn("`--include-date`", line)
-        self.assertNotIn("--date", line.replace("--include-date", ""))
-        self.assertNotRegex(line, r"-s\b")
-        self.assertIn("`--preserve-case`", line)
+        self.assertIn(" --include-date ", span + " ")
+        self.assertNotIn("--date", span.replace("--include-date", ""))
+        self.assertNotRegex(span, r"(?<!-)-s\b")
+        self.assertIn(" --preserve-case ", span + " ")
 
-    def test_each_command_stays_on_one_line_and_the_headings_are_unchanged(self) -> None:
-        lines = _text().command_map().splitlines()
-        commands = [line for line in lines if not line.startswith("### ")]
+    def test_the_compress_commands_say_they_can_reach_a_target_size(self) -> None:
+        lines = _all_lines(_text().command_map(["image", "video"]))
+        for path in ("image compress", "video compress"):
+            with self.subTest(path=path):
+                self.assertIn("target size", lines[path])
 
-        self.assertEqual(len(commands), len(_text().entries()))
-        for line in commands:
-            self.assertTrue(line.startswith("- `jzr "), line)
+    def test_each_command_stays_on_one_line_and_there_is_one_span_per_line(self) -> None:
+        lines = [
+            line for line in _text().command_map(_help_order()).splitlines()
+            if line.strip() and not line.startswith("### ")
+        ]
+
+        self.assertEqual(len(lines), len(_text().entries()))
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertRegex(line, r"^- `jzr [^`]+` - \S")
+
+    def test_users_own_bindings_never_appear(self) -> None:
+        self.assertTrue((Path(self.config.name) / "bindings.json").is_file())
+
+        self.assertNotIn("mybinding", _text().command_map(_help_order()))
 
     def test_the_text_has_no_carriage_return(self) -> None:
-        self.assertNotIn("\r", _text().command_map())
+        self.assertNotIn("\r", _text().command_map(_help_order()))
 
 
-class IntroTests(SkillTextCase):
-    """The sentence above the command list, as `build()` makes it (not as it was last committed)."""
+TAGGED = (
+    "head {name}\n"
+    "untagged one\n"
+    "\n"
+    "[media] only media\n"
+    "[pdf] only pdf\n"
+    "[data] only data\n"
+    "[system] only system\n"
+    "[media pdf] media and pdf\n"
+    "[pdf data system] three names\n"
+    "[media pdf data system] every skill, tagged\n"
+    "untagged two\n"
+    "tail\n"
+)
+TAGGED_EXPECTED = {
+    "jzr-media": ["only media", "media and pdf", "every skill, tagged"],
+    "jzr-pdf": ["only pdf", "media and pdf", "three names", "every skill, tagged"],
+    "jzr-data": ["only data", "three names", "every skill, tagged"],
+    "jzr-system": ["only system", "three names", "every skill, tagged"],
+}
 
-    def _intro(self) -> str:
-        text = _text().build()["SKILL.md"]
-        heading = text.index("## Commands")
-        return text[heading + len("## Commands"):text.index("<!-- commands:start -->")].strip()
 
-    def test_it_no_longer_says_the_list_shows_no_options(self) -> None:
-        intro = self._intro()
+class TemplateTests(SkillTextCase):
+    def test_name_description_and_commands_are_replaced_in_every_place(self) -> None:
+        template = "name: {name}\ndescription: {description}\n# {name}\n{commands}\nend {name}\n"
+        for name, groups in GROUPS.items():
+            with self.subTest(skill=name):
+                text = _text().skill_text(name, template=template)
 
-        self.assertTrue(intro)
-        self.assertNotIn("shows no options", intro)
+                lines = text.splitlines()
+                self.assertEqual(lines[0], f"name: {name}")
+                self.assertEqual(lines[1], f"description: {DESCRIPTIONS[name]}")
+                self.assertEqual(lines[2], f"# {name}")
+                self.assertEqual(lines[-1], f"end {name}")
+                for placeholder in ("{name}", "{description}", "{commands}"):
+                    self.assertNotIn(placeholder, text)
+                self.assertIn(_text().command_map(groups).strip(), text)
 
-    def test_it_does_not_tell_agents_to_run_help_before_using_a_command(self) -> None:
-        self.assertNotIn("Before using", self._intro())
+    def test_the_commands_are_the_command_list_of_the_groups_of_that_skill_only(self) -> None:
+        for name, groups in GROUPS.items():
+            with self.subTest(skill=name):
+                text = _text().skill_text(name, template="{commands}\n")
 
-    def test_it_says_each_line_shows_the_options_and_the_shared_ones_are_under_rules(self) -> None:
-        intro = self._intro()
+                headings = [h for h, _lines in _parse_blocks(text)]
+                self.assertEqual(headings, [f"### {g}" for g in _help_order() if g in groups])
+                self.assertEqual(text.strip(), _text().command_map(groups).strip())
 
-        self.assertRegex(intro, r"(?i)\beach line\b.*\boptions\b")
-        self.assertRegex(intro, r"(?i)\bshared\b")
-        self.assertIn("Rules", intro)
+    def test_a_tagged_line_is_kept_without_its_tag_and_its_space_only_in_the_skills_named(self) -> None:
+        for name, kept in TAGGED_EXPECTED.items():
+            with self.subTest(skill=name):
+                text = _text().skill_text(name, template=TAGGED)
 
-    def test_it_still_names_the_help_command_and_the_reference_files(self) -> None:
-        intro = self._intro()
+                self.assertEqual(
+                    text.splitlines(),
+                    [f"head {name}", "untagged one", "", *kept, "untagged two", "tail"],
+                )
 
-        self.assertIn("`jzr <group> <command> -h`", intro)
-        self.assertIn("reference file", intro)
-        self.assertIn("worked examples", intro)
+    def test_the_tags_may_name_one_two_three_or_all_four_skills(self) -> None:
+        counts = {
+            tag: [n for n in SKILL_NAMES if tag_line in _text().skill_text(n, template=TAGGED).splitlines()]
+            for tag, tag_line in (
+                ("one", "only media"),
+                ("two", "media and pdf"),
+                ("three", "three names"),
+                ("four", "every skill, tagged"),
+            )
+        }
 
-    def test_it_has_a_rules_section_that_covers_the_shared_options_it_points_to(self) -> None:
-        text = _text().build()["SKILL.md"]
-        rules = text[text.index("## Rules"):]
-
-        for option in ("--overwrite", "--dry-run", "--outdir", "-o FILE", "--dir", "`-r`", "-p REGEX"):
-            with self.subTest(option=option):
-                self.assertIn(option, rules)
-
-    def test_the_built_skill_stays_under_150_lines_with_the_options_listed(self) -> None:
-        built = _text().build()["SKILL.md"]
-
-        self.assertLess(len(built.splitlines()), 150)
-        # One line for each command: the list did not grow by wrapping.
-        block = built[built.index("<!-- commands:start -->"):built.index("<!-- commands:end -->")]
         self.assertEqual(
-            len([line for line in block.splitlines() if line.startswith("- `jzr ")]),
-            len(_text().entries()),
+            {tag: len(names) for tag, names in counts.items()}, {"one": 1, "two": 2, "three": 3, "four": 4}
         )
 
+    def test_a_line_without_a_tag_goes_into_all_four_unchanged_blank_lines_included(self) -> None:
+        template = "first\n\n  indented, with [brackets]\n- plain bullet\n\nlast\n"
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                self.assertEqual(_text().skill_text(name, template=template), template)
 
-class ScanRuleTests(SkillTextCase):
-    """The Rules line about running without SOURCES, as `build()` makes it."""
+    def test_the_text_ends_with_the_one_newline_of_the_template(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                text = _text().skill_text(name, template=TAGGED)
 
-    def _rules(self) -> str:
-        text = _text().build()["SKILL.md"]
-        return text[text.index("## Rules"):]
+                self.assertTrue(text.endswith("tail\n"))
+                self.assertNotIn("\r", text)
 
-    def _scan_rule(self) -> str:
-        """The Rules bullet that explains `--dir`."""
-        bullets = [line for line in self._rules().splitlines() if line.startswith("- ") and "--dir" in line]
-        self.assertEqual(len(bullets), 1, bullets)
-        return bullets[0]
+    def test_an_unknown_name_in_a_tag_is_an_error_even_when_other_names_in_it_are_known(self) -> None:
+        for tagged in ("[nope] x\n", "[media nope] x\n", "[nope pdf] x\n", "[media pdf datum] x\n"):
+            for name in SKILL_NAMES:
+                with self.subTest(template=tagged, skill=name), self.assertRaises(ValueError):
+                    _text().skill_text(name, template=f"head\n{tagged}tail\n")
 
-    def test_it_no_longer_tells_agents_to_dry_run_every_scan_first(self) -> None:
-        text = _text().build()["SKILL.md"]
+    def test_a_tag_names_the_skills_without_the_jzr_prefix(self) -> None:
+        text = _text().skill_text("jzr-pdf", template="[pdf] kept\n[media] dropped\n")
 
-        self.assertNotIn("Run such a scan with `--dry-run` first", text)
-        self.assertNotRegex(text, r"(?i)scan with `--dry-run` first")
+        self.assertEqual(text.splitlines(), ["kept"])
 
-    def test_it_keeps_the_facts_about_the_folder_scan(self) -> None:
-        rule = self._scan_rule()
+    def test_brackets_later_in_a_line_do_not_make_it_a_tag(self) -> None:
+        bullet = "- Run `jzr pdf organize [SOURCES]... --rotate [PAGES:]ANGLE` or [media] here"
+        template = f"{bullet}\n[pdf] {bullet}\n[media] {bullet}\n"
 
-        self.assertRegex(rule, r"(?i)\b(no|without)\s+SOURCES\b")
-        self.assertIn("every matching file in `--dir`", rule)
-        self.assertIn("current folder", rule)
-        self.assertIn("`-r`", rule)
-        self.assertIn("subfolders", rule)
-        self.assertIn("-p REGEX", rule)
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                text = _text().skill_text(name, template=template)
 
-    def _sentences(self) -> list[str]:
-        return re.split(r"(?<=[.;])\s+", self._scan_rule())
+                expected = [bullet]
+                if name in ("jzr-pdf", "jzr-media"):
+                    expected.append(bullet)
+                self.assertEqual(text.splitlines(), expected)
 
-    def test_it_says_files_named_as_sources_need_no_dry_run(self) -> None:
-        no_dry_run = (
-            r"(?i)\bno\s+`?(?:--)?dry[- ]run"
-            r"|dry[- ]run`?\s+(?:is\s+)?(?:not needed|not necessary|unnecessary|optional)"
-            r"|\b(?:not|n't)\s+(?:need|needed|necessary)\b[^.]*dry[- ]run"
-            r"|without a\s+`?(?:--)?dry[- ]run"
+    def test_the_default_template_is_the_packaged_template_md(self) -> None:
+        self.assertTrue(TEMPLATE.is_file(), f"{TEMPLATE} is missing")
+        template = TEMPLATE.read_text(encoding="utf-8")
+
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                self.assertEqual(
+                    _text().skill_text(name), _text().skill_text(name, template=template.replace("\r\n", "\n"))
+                )
+
+    def test_a_different_template_changes_the_text_so_the_default_is_not_hard_coded(self) -> None:
+        self.assertNotEqual(
+            _text().skill_text("jzr-pdf", template="only this\n"), _text().skill_text("jzr-pdf")
         )
-        named = r"(?i)\b(named|given|listed|SOURCES?|files?|paths?|arguments?)\b"
-        found = [s for s in self._sentences() if re.search(no_dry_run, s)]
+        self.assertEqual(_text().skill_text("jzr-pdf", template="only this\n"), "only this\n")
 
-        self.assertTrue(found, f"no sentence says a dry run is not needed: {self._scan_rule()!r}")
-        self.assertTrue([s for s in found if re.search(named, s)], found)
+    def test_the_packaged_template_has_the_placeholders_and_only_valid_tags(self) -> None:
+        self.assertTrue(TEMPLATE.is_file(), f"{TEMPLATE} is missing")
+        template = TEMPLATE.read_text(encoding="utf-8").replace("\r\n", "\n")
+        lines = template.splitlines()
 
-    def test_it_keeps_dry_run_for_previewing_a_scan_that_may_catch_unwanted_files(self) -> None:
-        for sentence in self._sentences():
-            if (
-                "--dry-run" in sentence
-                and re.search(r"(?i)\b(scan|preview\w*|folder)\b|--dir", sentence)
-                and re.search(r"(?i)\b(may|might|if|when|unsure|unless)\b", sentence)
-            ):
-                return
-        self.fail(f"no sentence offers --dry-run for a scan that may catch unwanted files: {self._scan_rule()!r}")
-
-    def test_the_skill_stays_under_150_lines(self) -> None:
-        self.assertLess(len(_text().build()["SKILL.md"].splitlines()), 150)
-
-
-class PageListRuleTests(SkillTextCase):
-    """A Rules line explains PAGES, so agents need neither `-h` nor a page count first."""
-
-    def _rule(self) -> str:
-        text = _text().build()["SKILL.md"]
-        rules = text[text.index("## Rules"):text.index("## Leave these to the user")]
-        bullets = [line for line in rules.splitlines() if line.startswith("- ") and "PAGES" in line]
-        self.assertEqual(len(bullets), 1, bullets)
-        return bullets[0]
-
-    def test_it_shows_numbers_ranges_and_open_ranges(self) -> None:
-        rule = self._rule()
-        self.assertIn("`1-3,5`", rule)
-        self.assertRegex(rule, r"`\d+-`")
-
-    def test_it_explains_last(self) -> None:
-        rule = self._rule()
-        self.assertRegex(rule, r"`\d+-last`")
-        self.assertRegex(rule, r"`last` is the last page")
-
-    def test_it_says_how_split_groups_are_separated(self) -> None:
-        self.assertRegex(self._rule(), r"`;`")
-
-    def test_every_page_example_in_it_parses(self) -> None:
-        from jzr_tools.core.pdfdoc import parse_pages
-
-        examples = re.findall(r"`([0-9last,;-]+)`", self._rule())
-        self.assertTrue(examples)
-        for example in examples:
-            if example == ";":
-                continue
-            with self.subTest(example=example):
-                parse_pages(example, 12, groups=True)
+        self.assertEqual(lines.count("{commands}"), 1)
+        self.assertIn("name: {name}", lines)
+        self.assertTrue(any(line.startswith("description: {description}") for line in lines))
+        self.assertEqual(set(re.findall(r"\{(\w+)\}", template)), {"name", "description", "commands"})
+        used: set[str] = set()
+        for line in lines:
+            match = re.match(r"\[([^\]]*)\] ", line)
+            if match:
+                used.update(match.group(1).split())
+        self.assertEqual(used, {n.removeprefix("jzr-") for n in SKILL_NAMES})
 
 
 def _sections(text: str) -> list[tuple[str, str]]:
@@ -617,232 +791,665 @@ class ReferenceTests(SkillTextCase):
                 self.assertFalse(text.endswith("\n\n"))
 
 
-class BuildAndWriteTests(SkillTextCase):
-    def _expected_names(self) -> set[str]:
-        return {"SKILL.md"} | {f"reference/{e.group}.md" for e in _text().entries()}
 
-    def test_build_returns_skill_md_and_one_reference_file_per_stem(self) -> None:
-        built = _text().build()
+class BuiltCase(SkillTextCase):
+    """A case that looks at what `build()` makes (not at what was last committed)."""
 
-        self.assertEqual(set(built), self._expected_names())
-        for name, text in built.items():
-            with self.subTest(file=name):
-                self.assertIsInstance(text, str)
-                self.assertNotIn("\r", text)
-                self.assertTrue(text.endswith("\n"))
-                self.assertFalse(text.endswith("\n\n"))
+    _built: dict[str, dict[str, str]] | None = None
 
-    def test_build_fills_the_marked_block_of_skill_md_with_the_command_map(self) -> None:
-        skill = _text().build()["SKILL.md"]
+    @classmethod
+    def built(cls) -> dict[str, dict[str, str]]:
+        if cls._built is None:
+            cls._built = _text().build()
+        return cls._built
 
-        start = skill.index("<!-- commands:start -->") + len("<!-- commands:start -->")
-        end = skill.index("<!-- commands:end -->")
+    def skill_md(self, name: str) -> str:
+        return self.built()[name]["SKILL.md"]
 
-        self.assertLess(start, end)
-        self.assertEqual(skill[start:end].strip(), _text().command_map().strip())
 
-    def test_build_reference_files_are_what_reference_returns(self) -> None:
-        built = _text().build()
-        for stem in {e.group for e in _text().entries()}:
-            with self.subTest(stem=stem):
-                self.assertEqual(built[f"reference/{stem}.md"], _text().reference(stem))
+def _expected_names(name: str) -> set[str]:
+    return {"SKILL.md"} | {f"reference/{group}.md" for group in GROUPS[name]}
 
-    def test_the_packaged_folder_holds_exactly_the_built_files(self) -> None:
-        self.assertTrue(PACKAGED.is_dir(), f"{PACKAGED} is missing")
-        present = {
-            path.relative_to(PACKAGED).as_posix() for path in PACKAGED.rglob("*") if path.is_file()
-        }
 
-        self.assertEqual(present, self._expected_names(), REGENERATE)
+def _rules(text: str) -> str:
+    return text[text.index("## Rules"):]
+
+
+def _bullets(text: str, needle: str) -> list[str]:
+    return [line for line in _rules(text).splitlines() if line.startswith("- ") and needle in line]
+
+
+def _files_under(folder: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(folder).as_posix(): path.read_bytes()
+        for path in folder.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+
+
+class BuildTests(BuiltCase):
+    def test_build_is_skill_by_skill_and_path_by_path_text(self) -> None:
+        built = self.built()
+
+        self.assertEqual(list(built), list(SKILL_NAMES))
+        for name, files in built.items():
+            self.assertIsInstance(files, dict)
+            for path, text in files.items():
+                with self.subTest(skill=name, file=path):
+                    self.assertIsInstance(path, str)
+                    self.assertIsInstance(text, str)
+
+    def test_each_skill_has_skill_md_and_one_reference_file_for_each_of_its_own_groups_only(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                self.assertEqual(set(self.built()[name]), _expected_names(name))
+
+    def test_the_skills_share_no_reference_file_and_together_have_one_for_every_group(self) -> None:
+        references = [
+            path for files in self.built().values() for path in files if path.startswith("reference/")
+        ]
+
+        self.assertEqual(sorted(references), sorted(f"reference/{g}.md" for g in _help_order()))
+        self.assertEqual(len(references), len(set(references)))
+
+    def test_the_reference_files_are_what_reference_returns(self) -> None:
+        for name, groups in GROUPS.items():
+            for group in groups:
+                with self.subTest(skill=name, group=group):
+                    self.assertEqual(self.built()[name][f"reference/{group}.md"], _text().reference(group))
+
+    def test_skill_md_is_what_skill_text_returns(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                self.assertEqual(self.skill_md(name), _text().skill_text(name))
+
+    def test_every_text_is_lf_only_and_ends_in_exactly_one_newline(self) -> None:
+        for name, files in self.built().items():
+            for path, text in files.items():
+                with self.subTest(skill=name, file=path):
+                    self.assertNotIn("\r", text)
+                    self.assertTrue(text.endswith("\n"))
+                    self.assertFalse(text.endswith("\n\n"))
+
+    def test_the_four_skill_files_differ_from_each_other(self) -> None:
+        self.assertEqual(len({self.skill_md(name) for name in SKILL_NAMES}), 4)
+
+    def test_users_own_bindings_never_appear_anywhere(self) -> None:
+        self.assertTrue((Path(self.config.name) / "bindings.json").is_file())
+
+        for name, files in self.built().items():
+            for path, text in files.items():
+                with self.subTest(skill=name, file=path):
+                    self.assertNotIn("mybinding", text)
+
+
+class SkillMdTests(BuiltCase):
+    def _front_matter(self, text: str) -> dict[str, str]:
+        lines = text.split("\n")
+        self.assertEqual(lines[0], "---")
+        end = lines.index("---", 1)
+        found: dict[str, str] = {}
+        for line in lines[1:end]:
+            self.assertRegex(line, r"^[a-z-]+: \S", f"front matter line is not one 'key: value' line: {line!r}")
+            key, _, value = line.partition(": ")
+            found[key] = value
+        return found
+
+    def _commands_section(self, text: str) -> str:
+        return text[text.index("## Commands"):text.index("## Rules")]
+
+    def test_front_matter_has_the_name_and_the_description_of_the_skill_and_nothing_else(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                meta = self._front_matter(self.skill_md(name))
+
+                self.assertEqual(list(meta), ["name", "description"])
+                self.assertEqual(meta["name"], name)
+                self.assertEqual(meta["description"], DESCRIPTIONS[name])
+                self.assertLess(len(meta["description"]), 400)
+                self.assertNotIn(meta["description"][0], ">|")
+
+    def test_the_title_is_the_name_and_the_only_sections_are_commands_and_rules(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                text = self.skill_md(name)
+
+                self.assertEqual(re.findall(r"(?m)^# (.*)$", text), [name])
+                self.assertEqual(re.findall(r"(?m)^## (.*)$", text), ["Commands", "Rules"])
+                self.assertLess(text.index("# " + name), text.index("## Commands"))
+
+    def test_the_old_sections_are_gone(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                text = self.skill_md(name)
+
+                self.assertNotIn("Leave these to the user", text)
+                self.assertNotIn("When not to use jzr", text)
+
+    def test_nothing_of_the_template_is_left_over(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                text = self.skill_md(name)
+
+                for placeholder in ("{name}", "{description}", "{commands}"):
+                    self.assertNotIn(placeholder, text)
+                self.assertNotRegex(text, r"(?m)^\[[a-z ]+\] ")
+                self.assertNotIn("<!-- commands", text)
+                self.assertNotIn("jzr --version", text)
+
+    def test_each_skill_is_smaller_than_the_split_skill_of_the_same_name_in_the_bench(self) -> None:
+        for name, limit in SIZE_LIMITS.items():
+            with self.subTest(skill=name):
+                self.assertLess(len(self.skill_md(name)), limit)
+
+    def test_each_skill_stays_under_150_lines(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                self.assertLess(len(self.skill_md(name).splitlines()), 150)
+
+    def test_the_intro_says_what_to_do_when_jzr_is_not_found(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                text = self.skill_md(name)
+
+                self.assertIn("uvx --from jzr-tools jzr <command>", text)
+                self.assertIn("uv tool install jzr-tools", text)
+                self.assertLess(text.index("uvx --from jzr-tools jzr"), text.index("## Commands"))
+
+    def test_the_commands_section_is_the_command_list_of_the_groups_of_that_skill(self) -> None:
+        shown = 0
+        for name, groups in GROUPS.items():
+            with self.subTest(skill=name):
+                section = self._commands_section(self.skill_md(name))
+                listed = section[section.index("### "):]
+
+                self.assertEqual(_parse_blocks(listed), _expected_blocks(groups))
+                self.assertIn(_text().command_map(groups).strip(), section)
+                shown += len(_spans(listed))
+        self.assertEqual(shown, len(_walk()))
+
+    def test_no_line_of_the_command_list_links_a_reference_file(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                self.assertNotIn("](reference/", self.skill_md(name))
+
+    def test_the_intro_of_the_commands_section_names_the_help_command_and_the_reference_files(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                section = self._commands_section(self.skill_md(name))
+                intro = section[:section.index("### ")]
+
+                self.assertIn("`jzr <command> -h`", intro)
+                self.assertIn("`reference/<group>.md`", intro)
+                self.assertIn("worked examples", intro)
+                self.assertRegex(intro, r"(?i)\bown arguments and options\b")
+                self.assertNotIn("shows no options", intro)
+                self.assertNotIn("Before using", intro)
+
+    def test_the_commands_of_a_skill_are_not_listed_in_another_skill(self) -> None:
+        for name, groups in GROUPS.items():
+            others = [heading for other in SKILL_NAMES if other != name for heading in self._headings(other)]
+            with self.subTest(skill=name):
+                self.assertEqual(
+                    self._headings(name), [f"### {g}" for g in _help_order() if g in groups]
+                )
+                self.assertEqual(set(self._headings(name)) & set(others), set())
+
+    def _headings(self, name: str) -> list[str]:
+        return re.findall(r"(?m)^### .*$", self.skill_md(name))
+
+
+# What the Rules section of each skill must say, and what must appear nowhere in it.
+MUST = {
+    "jzr-media": [
+        "Sources stay as they are", "`--overwrite`", "`--outdir DIR`", "`-o FILE`", "source -> target",
+        "`--dir`", "`-r`", "-p REGEX", "--dry-run", "jzr audio tags", "jzr ffmpeg status",
+        "jzr ffmpeg install", "jzr ffmpeg remove", "crop",
+    ],
+    "jzr-pdf": [
+        "Sources stay as they are", "`--overwrite`", "`--outdir DIR`", "`-o FILE`", "source -> target",
+        "`--dir`", "`-r`", "-p REGEX", "--dry-run", "PAGES", "jzr pdf split --pages",
+        "does not change what is on a page",
+    ],
+    "jzr-data": [
+        "`--dir`", "`-r`", "-p REGEX", "--types", "jzr data convert", "jzr file rename", "`-y`",
+        "jzr data json -w", "jzr text diff", "jzr env compare", "jzr jwt", "--secret-env", "--secret-file",
+        "Quote", "does not edit spreadsheets", "`-o FILE`", "stdout", "never redirect", "`wrote ...`",
+    ],
+    "jzr-system": [
+        "jzr port kill", "jzr port show PORT", "jzr host clean", "jzr host clean --dry-run",
+        "jzr host procs --kill", "jzr bind add", "jzr bind remove", "jzr completion install",
+        "jzr completion remove",
+    ],
+}
+MUST_NOT = {
+    "jzr-media": [
+        "PAGES", "--types", "jzr port", "jzr host", "jzr bind", "jzr completion", "jzr jwt",
+        "jzr file rename", "jzr data", "jzr text", "jzr env", "jzr pdf", "Quote", "spreadsheets",
+    ],
+    "jzr-pdf": [
+        "ffmpeg", "--types", "jzr port", "jzr host", "jzr bind", "jzr completion", "jzr jwt",
+        "jzr file rename", "jzr data", "jzr audio", "jzr image", "jzr video", "crop", "Quote", "spreadsheets",
+    ],
+    "jzr-data": [
+        "--overwrite", "--outdir", "--dry-run", "PAGES", "ffmpeg", "jzr port", "jzr host",
+        "jzr bind", "jzr completion", "Sources stay as they are", "source -> target", "jzr audio",
+        "jzr image", "jzr video", "jzr pdf", "crop",
+    ],
+    "jzr-system": [
+        "--overwrite", "--outdir", "`-o FILE`", "--dir", "PAGES", "--types", "ffmpeg", "jzr jwt",
+        "jzr file rename", "Sources stay as they are", "source -> target", "Quote", "spreadsheets", "crop",
+        "jzr image", "jzr video", "jzr audio", "jzr pdf", "jzr data", "jzr text", "jzr env",
+    ],
+}
+
+
+class RulesTests(BuiltCase):
+    def test_each_skill_says_what_it_must_in_its_rules(self) -> None:
+        for name, phrases in MUST.items():
+            rules = _rules(self.skill_md(name))
+            for phrase in phrases:
+                with self.subTest(skill=name, phrase=phrase):
+                    self.assertIn(phrase, rules)
+
+    def test_each_skill_says_nothing_about_the_jobs_of_the_others_anywhere_in_the_file(self) -> None:
+        for name, phrases in MUST_NOT.items():
+            text = self.skill_md(name)
+            for phrase in phrases:
+                with self.subTest(skill=name, phrase=phrase):
+                    self.assertNotIn(phrase, text)
+
+    def test_do_not_guess_options_is_in_all_four(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                self.assertIn("Do not guess options", _rules(self.skill_md(name)))
+                self.assertEqual(len(_bullets(self.skill_md(name), "Do not guess options")), 1)
+
+    def test_the_json_flag_and_the_exit_codes_are_in_all_four(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                text = self.skill_md(name)
+
+                self.assertEqual(len(_bullets(text, "`--json`")), 1)
+                exit_lines = [line for line in _rules(text).splitlines() if re.search(r"exit code", line, re.I)]
+                self.assertTrue(exit_lines, "no line about exit codes")
+                for code in ("0", "1", "2"):
+                    self.assertRegex(" ".join(exit_lines), rf"(?<!\d){code}(?!\d)")
+
+    def test_every_rule_is_one_bullet_and_there_are_no_blank_lines_or_other_text_in_the_section(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                lines = _rules(self.skill_md(name)).splitlines()[1:]
+                body = [line for line in lines if line.strip()]
+
+                self.assertGreater(len(body), 3)
+                for line in body:
+                    self.assertTrue(line.startswith("- "), line)
+
+    def test_the_media_and_pdf_skills_tell_to_read_the_result_line_instead_of_checking_the_file(self) -> None:
+        for name in ("jzr-media", "jzr-pdf"):
+            with self.subTest(skill=name):
+                (rule,) = _bullets(self.skill_md(name), "source -> target")
+                self.assertRegex(rule, r"(?i)\bread that line\b")
+                self.assertRegex(rule, r"(?i)\bsize\b")
+
+    def test_the_other_skills_do_not_have_that_rule(self) -> None:
+        for name in ("jzr-data", "jzr-system"):
+            with self.subTest(skill=name):
+                self.assertNotIn("read that line", self.skill_md(name))
+
+    def test_only_the_media_skill_says_how_to_get_ffmpeg_and_not_to_run_install_or_remove_itself(self) -> None:
+        (rule,) = _bullets(self.skill_md("jzr-media"), "jzr ffmpeg install")
+        self.assertIn("jzr ffmpeg status", rule)
+        self.assertIn("jzr ffmpeg remove", rule)
+        self.assertRegex(rule, r"(?i)\bsuggest\b")
+        for name in ("jzr-pdf", "jzr-data", "jzr-system"):
+            with self.subTest(skill=name):
+                self.assertNotIn("ffmpeg", self.skill_md(name))
+
+    def test_only_the_media_skill_says_audio_tags_change_the_file_in_place(self) -> None:
+        (rule,) = _bullets(self.skill_md("jzr-media"), "jzr audio tags")
+        self.assertIn("in place", rule)
+        for name in ("jzr-pdf", "jzr-data", "jzr-system"):
+            with self.subTest(skill=name):
+                self.assertNotIn("jzr audio tags", self.skill_md(name))
+
+    def test_only_the_data_skill_explains_types_and_it_does_so_in_one_rule(self) -> None:
+        (rule,) = _bullets(self.skill_md("jzr-data"), "--types")
+        self.assertIn("jzr data convert", rule)
+        self.assertIn("CSV", rule)
+        self.assertRegex(rule, r"(?i)\bnumbers\b")
+        self.assertRegex(rule, r"(?i)\bExcel\b")
+        for name in ("jzr-media", "jzr-pdf", "jzr-system"):
+            with self.subTest(skill=name):
+                self.assertNotIn("--types", self.skill_md(name))
+
+    def test_the_data_skill_says_which_commands_change_files_in_place(self) -> None:
+        (rule,) = _bullets(self.skill_md("jzr-data"), "jzr file rename")
+        self.assertIn("jzr data json -w", rule)
+        self.assertIn("`-y`", rule)
+        self.assertIn("in place", rule)
+
+    def test_the_data_skill_keeps_the_secret_off_the_command_line(self) -> None:
+        (rule,) = _bullets(self.skill_md("jzr-data"), "--secret-env")
+        self.assertRegex(rule, r"(?i)\bnever\b")
+        self.assertIn("--secret-file", rule)
+
+    def test_the_exit_one_for_a_difference_is_only_in_the_data_skill(self) -> None:
+        (rule,) = _bullets(self.skill_md("jzr-data"), "jzr env compare")
+        self.assertIn("jzr text diff", rule)
+        self.assertRegex(rule, r"exit 1")
+        self.assertRegex(rule, r"\b2\b")
+
+    def test_only_the_system_skill_makes_the_user_decide_about_ending_and_changing_things(self) -> None:
+        text = self.skill_md("jzr-system")
+        (kill,) = _bullets(text, "jzr port kill")
+        self.assertIn("without asking", kill)
+        self.assertRegex(kill, r"Run `jzr port show PORT` first")
+        (clean,) = _bullets(text, "jzr host procs --kill")
+        self.assertIn("jzr host clean", clean)
+        self.assertRegex(clean, r"(?i)\bsuggest\b")
+        (ask,) = _bullets(text, "jzr bind add")
+        self.assertRegex(ask, r"(?i)^- Ask before\b")
+        for command in ("jzr bind remove", "jzr completion install", "jzr completion remove"):
+            with self.subTest(command=command):
+                self.assertIn(command, ask)
+
+    def test_the_limits_of_jzr_are_each_in_the_skill_they_belong_to(self) -> None:
+        for name, words in (
+            ("jzr-media", ("crop", "rotate", "join", "watermark")),
+            ("jzr-pdf", ("does not change what is on a page",)),
+            ("jzr-data", ("does not edit spreadsheets",)),
+        ):
+            for word in words:
+                with self.subTest(skill=name, word=word):
+                    self.assertTrue(
+                        [b for b in _bullets(self.skill_md(name), word) if "jzr does not" in b], word
+                    )
+        self.assertEqual(_bullets(self.skill_md("jzr-system"), "jzr does not"), [])
+
+
+class ScanRuleTests(BuiltCase):
+    """The Rules lines about running without SOURCES, in the skills that have batch commands."""
+
+    def _scan_rule(self, name: str) -> str:
+        bullets = _bullets(self.skill_md(name), "--dir")
+        self.assertEqual(len(bullets), 1, bullets)
+        return bullets[0]
+
+    def _dry_run_rule(self, name: str) -> str:
+        bullets = _bullets(self.skill_md(name), "--dry-run")
+        self.assertEqual(len(bullets), 1, bullets)
+        return bullets[0]
+
+    def _sentences(self, name: str) -> list[str]:
+        return re.split(r"(?<=[.;])\s+", self._dry_run_rule(name))
+
+    def test_no_skill_tells_agents_to_dry_run_every_scan_first(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                text = self.skill_md(name)
+
+                self.assertNotIn("Run such a scan with `--dry-run` first", text)
+                self.assertNotRegex(text, r"(?i)scan with `--dry-run` first")
+
+    def test_the_skills_with_batch_commands_keep_the_facts_about_the_folder_scan(self) -> None:
+        for name in ("jzr-media", "jzr-pdf", "jzr-data"):
+            with self.subTest(skill=name):
+                rule = self._scan_rule(name)
+
+                self.assertRegex(rule, r"(?i)\b(no|without)\s+SOURCES\b")
+                self.assertIn("every matching file in `--dir`", rule)
+                self.assertIn("current folder", rule)
+                self.assertIn("`-r`", rule)
+                self.assertIn("subfolders", rule)
+                self.assertIn("-p REGEX", rule)
+
+    def test_media_and_pdf_say_files_named_as_sources_need_no_dry_run(self) -> None:
+        no_dry_run = (
+            r"(?i)\bno\s+`?(?:--)?dry[- ]run"
+            r"|dry[- ]run`?\s+(?:is\s+)?(?:not needed|not necessary|unnecessary|optional)"
+            r"|\b(?:not|n't)\s+(?:need|needed|necessary)\b[^.]*dry[- ]run"
+            r"|without a\s+`?(?:--)?dry[- ]run"
+        )
+        named = r"(?i)\b(named|given|listed|SOURCES?|files?|paths?|arguments?)\b"
+        for name in ("jzr-media", "jzr-pdf"):
+            with self.subTest(skill=name):
+                found = [s for s in self._sentences(name) if re.search(no_dry_run, s)]
+
+                self.assertTrue(found, f"no sentence says a dry run is not needed: {self._dry_run_rule(name)!r}")
+                self.assertTrue([s for s in found if re.search(named, s)], found)
+
+    def test_media_and_pdf_keep_dry_run_for_previewing_a_scan_that_may_catch_unwanted_files(self) -> None:
+        for name in ("jzr-media", "jzr-pdf"):
+            with self.subTest(skill=name):
+                for sentence in self._sentences(name):
+                    if (
+                        "--dry-run" in sentence
+                        and re.search(r"(?i)\b(scan|preview\w*|folder)\b|--dir", sentence)
+                        and re.search(r"(?i)\b(may|might|if|when|unsure|unless)\b", sentence)
+                    ):
+                        break
+                else:
+                    self.fail(f"no sentence offers --dry-run for a scan that may catch unwanted files: {name}")
+
+    def test_the_data_skill_has_the_scan_rule_but_no_dry_run_anywhere(self) -> None:
+        self.assertNotIn("dry-run", self.skill_md("jzr-data"))
+        self.assertNotIn("dry run", self.skill_md("jzr-data"))
+
+    def test_the_system_skill_has_no_scan_rule(self) -> None:
+        self.assertEqual(_bullets(self.skill_md("jzr-system"), "--dir"), [])
+        self.assertNotIn("SOURCES", self.skill_md("jzr-system"))
+
+
+class PageListRuleTests(BuiltCase):
+    """A Rules line explains PAGES, so agents need neither `-h` nor a page count first."""
+
+    def _rule(self) -> str:
+        bullets = _bullets(self.skill_md("jzr-pdf"), "PAGES")
+        self.assertEqual(len(bullets), 1, bullets)
+        return bullets[0]
+
+    def test_it_shows_numbers_ranges_and_open_ranges(self) -> None:
+        rule = self._rule()
+        self.assertIn("`1-3,5`", rule)
+        self.assertRegex(rule, r"`\d+-`")
+
+    def test_it_explains_last(self) -> None:
+        rule = self._rule()
+        self.assertRegex(rule, r"`\d+-last`")
+        self.assertRegex(rule, r"`last` is the last page")
+
+    def test_it_says_how_split_groups_are_separated(self) -> None:
+        self.assertRegex(self._rule(), r"`;`")
+
+    def test_every_page_example_in_it_parses(self) -> None:
+        from jzr_tools.core.pdfdoc import parse_pages
+
+        examples = re.findall(r"`([0-9last,;-]+)`", self._rule())
+        self.assertTrue(examples)
+        for example in examples:
+            if example == ";":
+                continue
+            with self.subTest(example=example):
+                parse_pages(example, 12, groups=True)
+
+    def test_the_other_skills_do_not_explain_pages(self) -> None:
+        for name in ("jzr-media", "jzr-data", "jzr-system"):
+            with self.subTest(skill=name):
+                self.assertNotIn("PAGES", self.skill_md(name))
+                self.assertNotIn("2-last", self.skill_md(name))
+
+
+class CommittedFilesTests(BuiltCase):
+    def test_the_template_is_packaged_and_the_old_single_skill_folder_is_gone(self) -> None:
+        self.assertTrue(TEMPLATE.is_file(), f"{TEMPLATE} is missing")
+        self.assertFalse(OLD_SKILL.exists(), f"{OLD_SKILL} must be deleted")
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                self.assertTrue((SKILLS_DIR / name).is_dir(), f"{SKILLS_DIR / name} is missing; {REGENERATE}")
+
+    def test_each_packaged_skill_folder_holds_exactly_the_built_files(self) -> None:
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                self.assertEqual(set(_files_under(SKILLS_DIR / name)), set(self.built()[name]), REGENERATE)
 
     @_needs_known_click
     def test_the_packaged_files_equal_what_build_produces(self) -> None:
-        for name, text in _text().build().items():
-            with self.subTest(file=name):
-                path = PACKAGED / name
-                self.assertTrue(path.is_file(), f"{path} is missing; {REGENERATE}")
-                committed = path.read_bytes().decode("utf-8").replace("\r\n", "\n")
-                self.assertEqual(committed, text, f"{name} is out of date; {REGENERATE}")
+        for name, files in self.built().items():
+            for path, text in files.items():
+                with self.subTest(skill=name, file=path):
+                    file = SKILLS_DIR / name / path
+                    self.assertTrue(file.is_file(), f"{file} is missing; {REGENERATE}")
+                    committed = file.read_bytes().decode("utf-8").replace("\r\n", "\n")
+                    self.assertEqual(committed, text, f"{name}/{path} is out of date; {REGENERATE}")
 
-    def test_the_marked_block_of_the_committed_skill_md_is_the_current_command_map(self) -> None:
-        committed = (PACKAGED / "SKILL.md").read_text(encoding="utf-8").replace("\r\n", "\n")
-        start = committed.index("<!-- commands:start -->") + len("<!-- commands:start -->")
-        end = committed.index("<!-- commands:end -->")
-
-        self.assertEqual(committed[start:end].strip(), _text().command_map().strip(), REGENERATE)
-
-    def test_write_into_an_empty_folder_creates_every_file_in_lf_and_lists_them(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            folder = Path(tmp) / "jzr"
-            folder.mkdir()
-
-            changed = _text().write(folder)
-
-            built = _text().build()
-            self.assertEqual({Path(p).resolve() for p in changed},
-                             {(folder / name).resolve() for name in built})
-            self.assertEqual(len(changed), len(built))
-            for name, text in built.items():
-                with self.subTest(file=name):
-                    self.assertEqual((folder / name).read_bytes(), text.encode("utf-8"))
-
-    def test_write_restores_a_damaged_file_and_a_missing_one_and_removes_nothing_else(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            folder = Path(tmp) / "jzr"
-            folder.mkdir()
-            _text().write(folder)
-            built = _text().build()
-            damaged = folder / "reference" / "image.md"
-            damaged.write_text("broken\n", encoding="utf-8")
-            (folder / "SKILL.md").unlink()
-            stray = folder / "notes.txt"
-            stray.write_text("keep me\n", encoding="utf-8")
-            other = folder / "reference" / "extra.md"
-            other.write_text("keep me too\n", encoding="utf-8")
-
-            changed = _text().write(folder)
-
-            self.assertEqual(
-                {Path(p).resolve() for p in changed},
-                {damaged.resolve(), (folder / "SKILL.md").resolve()},
-            )
-            self.assertEqual(damaged.read_bytes(), built["reference/image.md"].encode("utf-8"))
-            self.assertEqual((folder / "SKILL.md").read_bytes(), built["SKILL.md"].encode("utf-8"))
-            self.assertEqual(stray.read_text(encoding="utf-8"), "keep me\n")
-            self.assertEqual(other.read_text(encoding="utf-8"), "keep me too\n")
-
-    def test_a_second_write_changes_nothing_and_returns_an_empty_list(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            folder = Path(tmp) / "jzr"
-            folder.mkdir()
-            _text().write(folder)
-            before = {
-                path.name: (path.read_bytes(), path.stat().st_mtime_ns)
-                for path in folder.rglob("*") if path.is_file()
-            }
-
-            changed = _text().write(folder)
-
-            self.assertEqual(changed, [])
-            after = {
-                path.name: (path.read_bytes(), path.stat().st_mtime_ns)
-                for path in folder.rglob("*") if path.is_file()
-            }
-            self.assertEqual(after, before)
-
+    @_needs_known_click
     def test_write_into_a_copy_of_the_packaged_folder_reports_nothing_when_it_is_current(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            copy = Path(tmp) / "jzr"
-            shutil.copytree(PACKAGED, copy)
+            copy = Path(tmp) / "skill"
+            shutil.copytree(SKILLS_DIR, copy, ignore=shutil.ignore_patterns("__pycache__"))
 
             changed = _text().write(copy)
 
             self.assertEqual(changed, [], REGENERATE)
 
 
-class SkillMdTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        path = PACKAGED / "SKILL.md"
-        if not path.is_file():
-            raise AssertionError(f"{path} is missing")
-        cls.text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
-        cls.lines = cls.text.split("\n")
+class WriteTests(BuiltCase):
+    def _paths(self, folder: Path) -> set[Path]:
+        return {
+            (folder / name / path).resolve() for name, files in self.built().items() for path in files
+        }
 
-    def _front_matter(self) -> dict[str, str]:
-        self.assertEqual(self.lines[0], "---")
-        end = self.lines.index("---", 1)
-        found: dict[str, str] = {}
-        for line in self.lines[1:end]:
-            self.assertRegex(line, r"^[a-z-]+: \S", f"front matter line is not one 'key: value' line: {line!r}")
-            key, _, value = line.partition(": ")
-            found[key] = value
-        return found
+    def _folder(self) -> Path:
+        tmp = tempfile.TemporaryDirectory(prefix="jzr-skill-write-")
+        self.addCleanup(tmp.cleanup)
+        folder = Path(tmp.name) / "skill"
+        folder.mkdir()
+        return folder
 
-    def _section(self, title: str) -> str:
-        heading = re.compile(rf"^(#+)\s+.*{re.escape(title)}", re.IGNORECASE)
-        for index, line in enumerate(self.lines):
-            match = heading.match(line)
-            if match:
-                level = len(match.group(1))
-                body: list[str] = []
-                for follower in self.lines[index + 1:]:
-                    other = re.match(r"^(#+)\s", follower)
-                    if other and len(other.group(1)) <= level:
-                        break
-                    body.append(follower)
-                return "\n".join(body)
-        self.fail(f"no section titled like {title!r}")
+    def test_write_into_an_empty_folder_creates_the_four_skills_in_lf_and_lists_every_file(self) -> None:
+        folder = self._folder()
 
-    def test_front_matter_names_the_skill_jzr_and_describes_it_in_one_short_line(self) -> None:
-        meta = self._front_matter()
+        changed = _text().write(folder)
 
-        self.assertEqual(meta["name"], "jzr")
-        self.assertTrue(meta["description"].strip())
-        self.assertLess(len(meta["description"]), 400)
-        self.assertNotIn(meta["description"][0], ">|")
+        self.assertEqual({Path(p).resolve() for p in changed}, self._paths(folder))
+        self.assertEqual(len(changed), sum(len(files) for files in self.built().values()))
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), sorted(SKILL_NAMES))
+        for name, files in self.built().items():
+            for path, text in files.items():
+                with self.subTest(skill=name, file=path):
+                    self.assertEqual((folder / name / path).read_bytes(), text.encode("utf-8"))
 
-    def test_the_description_says_when_to_use_the_skill(self) -> None:
-        description = self._front_matter()["description"].lower()
-        for word in ("image", "video", "audio"):
-            self.assertIn(word, description)
+    def test_write_does_not_put_the_template_into_the_folder(self) -> None:
+        folder = self._folder()
 
-    def test_the_file_is_under_150_lines(self) -> None:
-        self.assertLess(len(self.text.splitlines()), 150)
+        _text().write(folder)
 
-    def test_both_command_map_markers_are_present_once_in_order(self) -> None:
-        self.assertEqual(self.text.count("<!-- commands:start -->"), 1)
-        self.assertEqual(self.text.count("<!-- commands:end -->"), 1)
-        self.assertLess(self.text.index("<!-- commands:start -->"), self.text.index("<!-- commands:end -->"))
+        self.assertFalse((folder / "template.md").exists())
 
-    def test_every_linked_reference_file_exists_and_nothing_else_is_linked_into_reference(self) -> None:
-        links = re.findall(r"\]\((reference/[^)#\s]+)\)", self.text)
+    def test_a_second_write_changes_nothing_and_returns_an_empty_list(self) -> None:
+        folder = self._folder()
+        _text().write(folder)
+        before = {
+            path.relative_to(folder).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in folder.rglob("*") if path.is_file()
+        }
+        self.assertGreater(len(before), 4)
 
-        self.assertTrue(links)
-        for link in links:
-            with self.subTest(link=link):
-                self.assertTrue((PACKAGED / link).is_file(), link)
+        changed = _text().write(folder)
 
-    def test_the_rules_name_the_flags_and_the_exit_codes(self) -> None:
-        for flag in ("--dry-run", "--overwrite", "--json", "--outdir"):
-            with self.subTest(flag=flag):
-                self.assertIn(flag, self.text)
-        exit_lines = [line for line in self.lines if re.search(r"exit code", line, re.IGNORECASE)]
-        self.assertTrue(exit_lines, "no line about exit codes")
-        joined = " ".join(exit_lines)
-        for code in ("0", "1", "2"):
-            self.assertRegex(joined, rf"(?<!\d){code}(?!\d)")
+        self.assertEqual(changed, [])
+        after = {
+            path.relative_to(folder).as_posix(): (path.read_bytes(), path.stat().st_mtime_ns)
+            for path in folder.rglob("*") if path.is_file()
+        }
+        self.assertEqual(after, before)
 
-    def test_it_tells_agents_to_run_jzr_with_uvx_when_it_is_not_installed(self) -> None:
-        self.assertIn("uvx --from jzr-tools jzr", self.text)
-        install = [line for line in self.lines if "jzr --version" in line]
-        self.assertEqual(len(install), 1, install)
-        self.assertIn("uvx --from jzr-tools jzr", install[0])
+    def test_write_restores_a_damaged_and_a_missing_file(self) -> None:
+        folder = self._folder()
+        _text().write(folder)
+        damaged = folder / "jzr-media" / "reference" / "image.md"
+        damaged.write_text("broken\n", encoding="utf-8")
+        missing = folder / "jzr-pdf" / "SKILL.md"
+        missing.unlink()
 
-    def test_it_still_offers_installing_jzr_as_the_other_way(self) -> None:
-        self.assertIn("uv tool install jzr-tools", self.text)
-        self.assertIn("pipx install jzr-tools", self.text)
+        changed = _text().write(folder)
 
-    def test_the_built_skill_keeps_both_install_hints(self) -> None:
-        built = _text().build()["SKILL.md"]
+        self.assertEqual({Path(p).resolve() for p in changed}, {damaged.resolve(), missing.resolve()})
+        self.assertEqual(damaged.read_bytes(), self.built()["jzr-media"]["reference/image.md"].encode("utf-8"))
+        self.assertEqual(missing.read_bytes(), self.built()["jzr-pdf"]["SKILL.md"].encode("utf-8"))
 
-        self.assertIn("uvx --from jzr-tools jzr", built)
-        self.assertIn("uv tool install jzr-tools", built)
+    def test_write_deletes_files_inside_the_four_skill_folders_that_the_build_no_longer_has(self) -> None:
+        folder = self._folder()
+        _text().write(folder)
+        stale = [
+            folder / "jzr-media" / "reference" / "old.md",
+            folder / "jzr-data" / "notes.txt",
+            # A reference file that belongs to another skill.
+            folder / "jzr-pdf" / "reference" / "image.md",
+            folder / "jzr-system" / "reference" / "deeper" / "x.md",
+        ]
+        for path in stale:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("stale\n", encoding="utf-8")
 
-    def test_the_rules_say_how_to_get_ffmpeg(self) -> None:
-        self.assertIn("jzr ffmpeg install", self.text)
+        changed = _text().write(folder)
 
-    def test_crop_is_named_as_something_jzr_does_not_do(self) -> None:
-        self.assertIn("crop", self._section("When not to use").lower())
+        for path in stale:
+            with self.subTest(file=path.relative_to(folder).as_posix()):
+                self.assertFalse(path.exists())
+        # Whether a deleted file is listed among the changed ones is not fixed; a rewrite of a current one is.
+        self.assertEqual({Path(p).resolve() for p in changed} - {p.resolve() for p in stale}, set())
+        self.assertEqual(
+            {path.relative_to(folder).as_posix() for path in folder.rglob("*") if path.is_file()},
+            {f"{name}/{path}" for name, files in self.built().items() for path in files},
+        )
 
-    def test_questions_are_left_to_the_user(self) -> None:
-        section = self._section("Leave these to the user")
-        for command in ("host clean", "host procs --kill", "ffmpeg install"):
-            with self.subTest(command=command):
-                self.assertIn(command, section)
+    def test_write_leaves_the_template_and_every_unrelated_file_of_the_folder_alone(self) -> None:
+        folder = self._folder()
+        _text().write(folder)
+        keep = {
+            "template.md": "my template {name}\n",
+            "notes.txt": "keep me\n",
+            "other-skill/SKILL.md": "not a jzr skill\n",
+            "other-skill/reference/x.md": "keep me too\n",
+            "jzr-extra/SKILL.md": "a folder that is not one of the four\n",
+        }
+        for name, text in keep.items():
+            path = folder / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        (folder / "jzr-media" / "reference" / "old.md").write_text("stale\n", encoding="utf-8")
 
-    def test_it_points_at_the_help_of_each_command(self) -> None:
-        self.assertIn("`jzr <group> <command> -h`", self.text)
+        _text().write(folder)
+
+        for name, text in keep.items():
+            with self.subTest(file=name):
+                self.assertEqual((folder / name).read_text(encoding="utf-8"), text)
+        self.assertFalse((folder / "jzr-media" / "reference" / "old.md").exists())
+
+    def test_write_builds_from_the_packaged_template_not_from_one_in_the_folder(self) -> None:
+        folder = self._folder()
+        (folder / "template.md").write_text("only this\n", encoding="utf-8")
+
+        _text().write(folder)
+
+        for name in SKILL_NAMES:
+            with self.subTest(skill=name):
+                self.assertEqual(
+                    (folder / name / "SKILL.md").read_text(encoding="utf-8"), self.skill_md(name)
+                )
+
+    def test_a_file_a_windows_checkout_gave_crlf_endings_counts_as_current(self) -> None:
+        folder = self._folder()
+        _text().write(folder)
+        path = folder / "jzr-data" / "SKILL.md"
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+
+        changed = _text().write(folder)
+
+        self.assertEqual(changed, [])
 
 
 class ExamplesTests(SkillTextCase):
@@ -937,3 +1544,4 @@ def _holds_path(value: object) -> bool:
 
 if __name__ == "__main__":
     unittest.main()
+

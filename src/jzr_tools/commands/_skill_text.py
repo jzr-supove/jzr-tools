@@ -1,33 +1,75 @@
-"""Build the texts of the agent skill from the commands themselves.
+"""Build the texts of the four agent skills from the commands themselves.
 
-The results are committed under ``data/skill/jzr`` and shipped with the
+``data/skill/template.md`` is the only hand-written text; each skill's
+SKILL.md is cut from it and its reference files are made from the commands.
+The results are committed under ``data/skill/<skill>`` and shipped with the
 package; a test fails when they no longer match the commands. In a checkout
 the same run also writes the Claude Code plugin files (see ``_plugin``). After
-changing a command, its help or its examples, run::
+changing a command, its help, its examples or the template, run::
 
     uv run python -m jzr_tools.commands._skill_text
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
+import re
 
 import click
 
 from jzr_tools.cli import app as root
+from jzr_tools.commands._plugin import sync
 from jzr_tools.commands._skill_examples import EXAMPLES
 from jzr_tools.commands._tree import LEFT_OUT, TOP_LEVEL, Entry, context, entries
-from jzr_tools.core.skill import source_dir
+from jzr_tools.core.skill import SKILL_NAMES, skills_dir
 
 __all__ = [
-    "LEFT_OUT", "SHARED_OPTIONS", "TOP_LEVEL", "Entry", "build", "command_map", "entries", "help_text",
-    "own_options", "reference", "write",
+    "LEFT_OUT", "SHARED_OPTIONS", "SKILLS", "TOP_LEVEL", "Entry", "Skill", "build", "command_map", "entries",
+    "help_text", "own_options", "reference", "skill_text", "write",
 ]
 
 HELP_WIDTH = 88
+TEMPLATE = "template.md"
 
-_START = "<!-- commands:start -->"
-_END = "<!-- commands:end -->"
+
+@dataclass(frozen=True)
+class Skill:
+    """What the front matter says, and the groups whose commands the skill lists."""
+
+    description: str
+    groups: tuple[str, ...]
+
+
+SKILLS: dict[str, Skill] = {
+    "jzr-media": Skill(
+        "Run the jzr command line for image, video and audio files. Convert, compress, resize, trim or "
+        "inspect images, video and audio; make GIFs; edit audio tags. Use it instead of ffmpeg or Pillow "
+        "scripts.",
+        ("image", "video", "audio", "ffmpeg"),
+    ),
+    "jzr-pdf": Skill(
+        "Run the jzr command line for PDF files. Merge, split, reorder, rotate or remove pages; pull out "
+        "text or images; show page counts and sizes. Use it instead of pypdf scripts or Ghostscript.",
+        ("pdf",),
+    ),
+    "jzr-data": Skill(
+        "Run the jzr command line for data, text and file jobs. Convert JSON, YAML, CSV, TOML and Excel "
+        "data; rename files; hash files; encode, diff or slug text; read JWTs; convert timestamps; make "
+        "UUIDs or passwords.",
+        ("data", "text", "tools", "random", "env", "file"),
+    ),
+    "jzr-system": Skill(
+        "Run the jzr command line for machine jobs. Find or free a port, see what holds it, clean caches, "
+        "and set up shell completion.",
+        ("port", "host", "bind", "completion"),
+    ),
+}
+assert tuple(SKILLS) == SKILL_NAMES, "the skills must be the installer's, in its order"
+
+# "[media pdf] " at the start of a template line: the line is only for those skills.
+_TAG = re.compile(r"\[([^\]]+)\] ")
 
 
 def _by_group() -> dict[str, list[Entry]]:
@@ -82,17 +124,16 @@ def own_options(entry: Entry) -> list[str]:
     return [*arguments, *options]
 
 
-def command_map() -> str:
-    """The list of commands in SKILL.md, under one heading for each reference file."""
+def command_map(groups: Sequence[str]) -> str:
+    """The list of commands of ``groups`` in SKILL.md, one heading per group, in `jzr --help` order."""
     blocks = []
     for group, commands in _by_group().items():
-        lines = [f"### {group} ([reference/{group}.md](reference/{group}.md))"]
+        if group not in groups:
+            continue
+        lines = [f"### {group}"]
         for entry in commands:
-            line = f"- `jzr {entry.path}` - {entry.command.get_short_help_str(limit=300)}"
-            items = own_options(entry)
-            if items:
-                line += " " + " ".join(f"`{item}`" for item in items)
-            lines.append(line)
+            span = " ".join([f"jzr {entry.path}", *own_options(entry)])
+            lines.append(f"- `{span}` - {entry.command.get_short_help_str(limit=300)}")
         blocks.append("\n".join(lines))
     return "\n".join(blocks) + "\n"
 
@@ -125,27 +166,67 @@ def reference(stem: str) -> str:
     return "\n".join(parts)
 
 
-def build() -> dict[str, str]:
-    """The text of every file of the skill, by its path in the skill folder."""
-    template = (source_dir() / "SKILL.md").read_text(encoding="utf-8")
-    before, _, rest = template.partition(_START)
-    _, _, after = rest.partition(_END)
-    built = {"SKILL.md": f"{before}{_START}\n{command_map()}{_END}{after}"}
-    for group in _by_group():
-        built[f"reference/{group}.md"] = reference(group)
+def _template() -> str:
+    return (skills_dir() / TEMPLATE).read_text(encoding="utf-8").replace("\r\n", "\n")
+
+
+def skill_text(name: str, template: str | None = None) -> str:
+    """The SKILL.md of one skill: the template's lines for it, with the placeholders filled in.
+
+    A line that starts with a tag such as ``[media pdf] `` is kept, without the
+    tag, only in the skills named; a line without one is kept in every skill.
+    """
+    if name not in SKILLS:
+        raise ValueError(f"no skill named {name}; the skills are {', '.join(SKILLS)}")
+    known = {skill.removeprefix("jzr-") for skill in SKILLS}
+    short = name.removeprefix("jzr-")
+    kept = []
+    for line in (_template() if template is None else template).splitlines(keepends=True):
+        tag = _TAG.match(line)
+        if tag is None:
+            kept.append(line)
+            continue
+        names = tag.group(1).split()
+        unknown = [n for n in names if n not in known]
+        if unknown:
+            raise ValueError(f"unknown skill {', '.join(unknown)} in the template line {line.rstrip()!r}")
+        if short in names:
+            kept.append(line[tag.end():])
+    skill = SKILLS[name]
+    # The commands go in last, so that nothing in a command's help is taken for a placeholder.
+    text = "".join(kept).replace("{name}", name).replace("{description}", skill.description)
+    return text.replace("{commands}", command_map(skill.groups).rstrip("\n"))
+
+
+def build() -> dict[str, dict[str, str]]:
+    """The text of every file of every skill: skill -> {path in its folder -> text}."""
+    groups = list(_by_group())
+    owned = {group for skill in SKILLS.values() for group in skill.groups}
+    for group in groups:
+        if group not in owned:
+            raise ValueError(f"the command group {group} belongs to no skill; add it to one in SKILLS")
+    template = _template()
+    built = {}
+    for name, skill in SKILLS.items():
+        files = {"SKILL.md": skill_text(name, template)}
+        for group in skill.groups:
+            if group not in groups:
+                raise ValueError(f"the skill {name} names {group}, which is not a command group")
+            files[f"reference/{group}.md"] = reference(group)
+        built[name] = files
     return built
 
 
 def write(folder: Path) -> list[Path]:
-    """Bring the files in ``folder`` up to date; the ones that changed."""
+    """Bring the skill folders in ``folder`` (``data/skill``) up to date; the files changed or deleted.
+
+    A file in one of the skill folders that the build no longer has is
+    deleted; everything else in ``folder``, such as the template, is left alone.
+    """
     changed = []
-    for name, text in build().items():
-        path = folder / name
-        if path.is_file() and path.read_bytes().replace(b"\r\n", b"\n") == text.encode("utf-8"):
-            continue
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(text.encode("utf-8"))
-        changed.append(path)
+    for name, texts in build().items():
+        files = {f"{name}/{path}": text.encode("utf-8") for path, text in texts.items()}
+        changed += sync(folder, files, folder / name)
     return changed
 
 
@@ -153,7 +234,7 @@ def _main() -> None:
     from jzr_tools import __version__
     from jzr_tools.commands import _plugin
 
-    changed = write(source_dir())
+    changed = write(skills_dir())
     root = _plugin.repository_root(Path(__file__).resolve().parents[1])
     if root is not None:
         changed += _plugin.write(root, _plugin.plugin_files(build(), __version__))

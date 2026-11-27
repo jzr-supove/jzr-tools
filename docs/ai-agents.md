@@ -5,10 +5,10 @@
 <img src="assets/agents.svg" alt="How AI agents reach jzr: a skill for agents with a shell, an MCP server for apps without one" width="100%">
 
 
-Agents that can run commands need only the skill. The MCP server is for programs
+Agents that can run commands need only the skills. The MCP server is for programs
 without a shell, such as Claude Desktop.
 
-| Client | Skill | MCP server |
+| Client | Skills | MCP server |
 |---|---|---|
 | Claude Code | `jzr agent install`, or the plugin (from 0.3.0) | `jzr agent install --mcp`, or the plugin |
 | Codex | `jzr agent install` | `jzr agent install --mcp` |
@@ -19,7 +19,7 @@ without a shell, such as Claude Desktop.
 | Zed, Cline and others | – | the usual `mcpServers` JSON, with `jzr agent mcp` as the command |
 
 For one Claude Code, use either the plugin or `jzr agent install`, not both:
-it would see two copies of the skill and two servers.
+it would see two copies of the skills and two servers.
 
 The plugin comes from this repository's marketplace:
 
@@ -31,35 +31,48 @@ claude plugin install jzr@jzr-tools
 It starts the server with `uvx`, so it needs [uv](https://docs.astral.sh/uv/)
 but no installed jzr.
 
-## Skill
+## Skills
 
 ```
 jzr agent install
 ```
 
-installs a skill: a short guide that tells an AI agent which jzr command does a
-job, so it runs `jzr` instead of writing its own script. Agents keep only its
-name and description in mind until a task needs it.
+installs four skills: short guides that tell an AI agent which jzr command does
+a job, so it runs `jzr` instead of writing its own script. Agents keep only
+each skill's name and description in mind, and load one when a task needs it.
 
-| Agent | Where the skill goes |
+| Skill | Commands |
 |---|---|
-| Claude Code | `~/.claude/skills/jzr` |
-| Codex | `~/.agents/skills/jzr` |
-| Cursor | Reads either; alone, it gets `~/.agents/skills/jzr` |
+| `jzr-media` | `image`, `video`, `audio`, `ffmpeg` |
+| `jzr-pdf` | `pdf` |
+| `jzr-data` | `data`, `text`, `file`, `env`, `random`, `hash`, `jwt`, `timestamp`, `uuid`, `password` |
+| `jzr-system` | `port`, `host`, `bind`, `completion` |
+
+They are four small skills instead of one large one because an agent pays for
+every word of a skill it loads: a PDF job then loads the PDF commands only.
+
+| Agent | Where the skills go |
+|---|---|
+| Claude Code | `~/.claude/skills/jzr-media` and the other three |
+| Codex | `~/.agents/skills/jzr-media` and the other three |
+| Cursor | Reads either; alone, it gets `~/.agents/skills/` |
 
 - It is installed for every agent whose folder (`~/.claude`, `~/.codex` or
   `~/.cursor`) exists. `--agent claude` or `--agent codex` picks one, found or
   not.
-- `--project` uses the current folder instead: `.claude/skills/jzr`, or
-  `.agents/skills/jzr` with `--agent codex`.
+- `--project` uses the current folder instead: `.claude/skills/`, or
+  `.agents/skills/` with `--agent codex`.
 - A copy that you changed, that a newer jzr installed, or that jzr did not
   install is left alone unless you add `--overwrite`. `--dry-run` only shows
   what would happen.
-- After upgrading jzr, run `jzr agent install` again.
-- `jzr agent remove` takes the skill out again, and `jzr agent skill` prints it
-  (`--path`: its folder in the package).
+- After upgrading jzr, run `jzr agent install` again. Up to 0.3.0 jzr installed
+  one skill named `jzr`; the install removes that copy, unless you changed it
+  (then it asks for `--overwrite`) or jzr did not install it (then it is left).
+- `jzr agent remove` takes the skills out again. `jzr agent skill` lists them
+  and `jzr agent skill jzr-pdf` prints one (`--path`: its folder in the
+  package).
 
-The guide tells agents to leave `jzr host clean`, `jzr host procs --kill` and
+The guides tell agents to leave `jzr host clean`, `jzr host procs --kill` and
 `jzr ffmpeg install` to you, and to ask before they change your setup.
 
 ## MCP server

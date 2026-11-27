@@ -1,8 +1,10 @@
-"""Install the packaged agent skill into the folders AI agents read.
+"""Install the packaged agent skills into the folders AI agents read.
 
-An installed copy carries a marker file with the jzr version it came from and
-a digest of its files, so a copy the user changed, or one jzr did not write,
-is never replaced or removed without being asked for.
+jzr ships four small skills, one for each kind of job, so that an agent loads
+only the commands a task needs. An installed copy carries a marker file with
+the jzr version it came from and a digest of its files, so a copy the user
+changed, or one jzr did not write, is never replaced or removed without being
+asked for.
 """
 
 from __future__ import annotations
@@ -15,7 +17,9 @@ from pathlib import Path
 import secrets
 import shutil
 
-SKILL_NAME = "jzr"
+SKILL_NAMES = ("jzr-media", "jzr-pdf", "jzr-data", "jzr-system")
+# The single skill that jzr installed up to 0.3.0; `install` takes it away.
+OLD_SKILL_NAMES = ("jzr",)
 MARKER = ".jzr-version"
 AGENTS = ("claude", "codex")
 
@@ -35,13 +39,19 @@ class Target:
     agents: tuple[str, ...]
     path: Path
 
+    @property
+    def name(self) -> str:
+        """The skill's name, which is its folder's."""
+        return self.path.name
+
 
 @dataclass(frozen=True)
 class Outcome:
     """What happened to one target.
 
-    ``status`` is installed, updated, current, removed, absent, refused or
-    failed. ``detail`` is the reason for the last two, and for updated the
+    ``status`` is installed, updated, current, removed, absent, refused,
+    foreign (an old skill jzr did not install, left alone) or failed.
+    ``detail`` is the reason for refused and failed, and for updated the
     version that was replaced, when it is known.
     """
 
@@ -50,28 +60,49 @@ class Outcome:
     detail: str = ""
 
 
-def source_dir() -> Path:
-    """The skill folder inside the installed package."""
-    return Path(__file__).resolve().parent.parent / "data" / "skill" / SKILL_NAME
+def skills_dir() -> Path:
+    """The folder inside the installed package that holds one folder for each skill."""
+    return Path(__file__).resolve().parent.parent / "data" / "skill"
+
+
+def source_dir(name: str) -> Path:
+    """The folder of one packaged skill."""
+    if name not in SKILL_NAMES:
+        raise SkillError(f"no skill named {name}; the skills are {', '.join(SKILL_NAMES)}")
+    return skills_dir() / name
 
 
 def targets(home: Path, *, agent: str | None = None, project: Path | None = None) -> list[Target]:
-    """Where the skill goes: one project folder, one agent, or every agent found."""
-    if project is not None:
-        return [_target(agent or "claude", project)]
-    if agent is not None:
-        return [_target(agent, home)]
+    """Where the skills go: one project folder, one agent, or every agent found; folder by folder."""
+    return _targets(SKILL_NAMES, home, agent, project)
 
-    found: list[Target] = []
+
+def old_targets(home: Path, *, agent: str | None = None, project: Path | None = None) -> list[Target]:
+    """Where the single skill of earlier versions would be, in the same folders as `targets`."""
+    return _targets(OLD_SKILL_NAMES, home, agent, project)
+
+
+def _targets(names: tuple[str, ...], home: Path, agent: str | None, project: Path | None) -> list[Target]:
+    return [Target(agents, folder / name) for agents, folder in _folders(home, agent, project) for name in names]
+
+
+def _folders(home: Path, agent: str | None, project: Path | None) -> list[tuple[tuple[str, ...], Path]]:
+    """Each skills folder to use, with the agents that read it."""
+    if project is not None:
+        return [_folder(agent or "claude", project)]
+    if agent is not None:
+        return [_folder(agent, home)]
+
+    found: list[tuple[tuple[str, ...], Path]] = []
     cursor = (home / ".cursor").is_dir()
     if (home / ".claude").is_dir():
-        found.append(_target("claude", home))
+        found.append(_folder("claude", home))
     if (home / ".codex").is_dir():
-        codex = _target("codex", home)
-        found.append(Target(("codex", "cursor"), codex.path) if cursor else codex)
+        codex = _folder("codex", home)
+        found.append((("codex", "cursor"), codex[1]) if cursor else codex)
     elif cursor and not found:
         # Cursor reads Claude's folder too, so it needs its own only here.
-        found.append(Target(("cursor",), _target("codex", home).path))
+        found.append((("cursor",), _folder("codex", home)[1]))
     if not found:
         raise SkillError(
             "no AI agent found (looked for ~/.claude, ~/.codex and ~/.cursor); "
@@ -80,10 +111,10 @@ def targets(home: Path, *, agent: str | None = None, project: Path | None = None
     return found
 
 
-def _target(agent: str, base: Path) -> Target:
+def _folder(agent: str, base: Path) -> tuple[tuple[str, ...], Path]:
     # Codex and Cursor read the shared .agents folder; Claude Code has its own.
     folder = ".claude" if agent == "claude" else ".agents"
-    return Target((agent,), base / folder / "skills" / SKILL_NAME)
+    return (agent,), base / folder / "skills"
 
 
 def files(folder: Path) -> dict[str, bytes]:
@@ -117,9 +148,9 @@ def install(
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> Outcome:
-    """Copy the skill into ``target``, replacing an older copy jzr installed."""
+    """Copy the skill named by ``target`` into it, replacing an older copy jzr installed."""
     try:
-        contents = files(source or source_dir())
+        contents = files(source or source_dir(target.name))
         status, detail = _plan_install(target.path, version, contents, overwrite)
         if status in ("installed", "updated") and not dry_run:
             _put(target.path, contents, version)
@@ -137,6 +168,16 @@ def remove(target: Target, *, overwrite: bool = False, dry_run: bool = False) ->
     except OSError as error:
         return Outcome(target, "failed", _reason(error))
     return Outcome(target, status, detail)
+
+
+def remove_old(target: Target, *, overwrite: bool = False, dry_run: bool = False) -> Outcome:
+    """Delete an earlier version's skill in ``target``; one jzr did not install is "foreign" and stays."""
+    try:
+        if os.path.lexists(target.path) and (_not_a_folder(target.path) or _read_marker(target.path) is None):
+            return Outcome(target, "foreign")
+    except OSError as error:
+        return Outcome(target, "failed", _reason(error))
+    return remove(target, overwrite=overwrite, dry_run=dry_run)
 
 
 def _plan_install(

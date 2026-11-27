@@ -1,4 +1,4 @@
-"""`jzr agent`: connect AI agents to jzr, with a skill or an MCP server."""
+"""`jzr agent`: connect AI agents to jzr, with skills or an MCP server."""
 
 from __future__ import annotations
 
@@ -25,8 +25,9 @@ _CLIENTS = ("claude", "codex", "vscode", "cursor", "desktop")
 def app() -> None:
     """Connect jzr to AI agents (skill and MCP server).
 
-    The skill is a short guide to jzr's commands that Claude Code, Codex and
-    Cursor load when a task needs it. Run `jzr agent install` again after
+    The skills (jzr-media, jzr-pdf, jzr-data, jzr-system) are short guides to
+    jzr's commands that Claude Code, Codex and Cursor load when a task needs
+    one. Run `jzr agent install` again after
     updating jzr. The MCP server offers the commands as tools to programs
     without a shell, such as Claude Desktop; `--mcp` registers it with
     Claude Code, Codex and VS Code and prints the entry for Cursor and
@@ -35,17 +36,38 @@ def app() -> None:
 
 
 @app.command()
-@click.option("--path", "show_path", is_flag=True, help="Print the folder of the packaged skill instead.")
-def skill(show_path: bool) -> None:
-    """Print the skill that `jzr agent install` installs."""
+@click.argument("name", required=False, metavar="[NAME]")
+@click.option("--path", "show_path", is_flag=True, help="Print the folder of the packaged skills (or of NAME) instead.")
+def skill(name: str | None, show_path: bool) -> None:
+    """List the skills that `jzr agent install` installs, or print the one called NAME."""
     from jzr_tools.core import skill as core
 
-    folder = core.source_dir()
+    if name is None:
+        if show_path:
+            click.echo(str(core.skills_dir()))
+            return
+        for each in core.SKILL_NAMES:
+            click.echo(f"{each}: {_description(core.files(core.source_dir(each))['SKILL.md'])}")
+        click.echo("Print one with: jzr agent skill NAME")
+        return
+    try:
+        folder = core.source_dir(name)
+    except core.SkillError as error:
+        raise click.UsageError(str(error)) from None
     if show_path:
         click.echo(str(folder))
         return
     # Bytes, so the line endings stay "\n" on Windows too.
     click.echo(core.files(folder)["SKILL.md"], nl=False)
+
+
+def _description(text: bytes) -> str:
+    """The description in the front matter of a SKILL.md."""
+    front = text.decode("utf-8").split("\n---\n", 1)[0]
+    for line in front.split("\n")[1:]:
+        if line.startswith("description:"):
+            return line.removeprefix("description:").strip()
+    return ""
 
 
 @app.command("mcp")
@@ -99,11 +121,12 @@ def install(
     with_mcp: bool,
     dry_run: bool,
 ) -> None:
-    """Install the skill for every AI agent found.
+    """Install the skills for every AI agent found.
 
-    Claude Code gets ~/.claude/skills/jzr; Codex gets ~/.agents/skills/jzr.
-    Cursor reads either. With --project the skill goes into .claude/skills
-    (--agent codex: .agents/skills) of the current folder.
+    Claude Code gets ~/.claude/skills/jzr-media and three more; Codex gets
+    the same four in ~/.agents/skills. Cursor reads either. With --project
+    they go into .claude/skills (--agent codex: .agents/skills) of the
+    current folder. The single jzr skill of earlier versions is taken away.
     """
     from jzr_tools.core import skill as core
 
@@ -117,8 +140,8 @@ def install(
     def run(target: Target) -> Outcome:
         return core.install(target, __version__, overwrite=overwrite, dry_run=dry_run)
 
-    outcomes = _run(agent, project, dry_run, run)
-    if not dry_run and any(outcome.status in ("installed", "updated") for outcome in outcomes):
+    outcomes = _run(agent, project, dry_run, run, overwrite)
+    if not dry_run and any(outcome.status in ("installed", "updated", "removed") for outcome in outcomes):
         click.echo("Restart the agent, or start a new session, to use it.")
     registered = _register(dry_run, client) if with_mcp else True
     _exit(outcomes, registered)
@@ -138,7 +161,7 @@ def remove(
     with_mcp: bool,
     dry_run: bool,
 ) -> None:
-    """Remove the skill that `jzr agent install` installed."""
+    """Remove the skills that `jzr agent install` installed, and the old jzr skill."""
     from jzr_tools.core import skill as core
 
     _check_mcp_options(with_mcp, client, project)
@@ -146,44 +169,64 @@ def remove(
     def run(target: Target) -> Outcome:
         return core.remove(target, overwrite=overwrite, dry_run=dry_run)
 
-    outcomes = _run(agent, project, dry_run, run)
+    outcomes = _run(agent, project, dry_run, run, overwrite)
     unregistered = _unregister(dry_run, client) if with_mcp else True
     _exit(outcomes, unregistered)
 
 
-def _run(agent: str | None, project: bool, dry_run: bool, run) -> list[Outcome]:  # noqa: ANN001
-    """Work on every target and print a line for each."""
+def _run(agent: str | None, project: bool, dry_run: bool, run, overwrite: bool) -> list[Outcome]:  # noqa: ANN001
+    """Work on every skill in every folder, then take the old skill away; a line for each."""
     from jzr_tools.core import skill as core
 
+    home, folder = Path.home(), Path.cwd() if project else None
     try:
-        targets = core.targets(Path.home(), agent=agent, project=Path.cwd() if project else None)
+        targets = core.targets(home, agent=agent, project=folder)
+        old_targets = core.old_targets(home, agent=agent, project=folder)
     except core.SkillError as error:
         click.echo(f"error: {error}", err=True)
         raise SystemExit(1) from None
 
     outcomes = []
     for target in targets:
-        outcome = run(target)
-        outcomes.append(outcome)
-        if outcome.status == "refused":
-            click.echo(f"skip {target.path}: {outcome.detail}", err=True)
-        elif outcome.status == "failed":
-            click.echo(f"error: {target.path}: {outcome.detail}", err=True)
-        else:
-            click.echo(_line(outcome, dry_run))
+        outcomes.append(_report(run(target), dry_run))
+    for target in old_targets:
+        outcomes.append(_report(core.remove_old(target, overwrite=overwrite, dry_run=dry_run), dry_run, old=True))
     return outcomes
 
 
+def _report(outcome: Outcome, dry_run: bool, *, old: bool = False) -> Outcome:
+    """Print the line for one outcome; an old skill that is not there gets none."""
+    path = outcome.target.path
+    if outcome.status == "refused":
+        click.echo(f"skip {path}: {outcome.detail}", err=True)
+    elif outcome.status == "failed":
+        click.echo(f"error: {path}: {outcome.detail}", err=True)
+    elif outcome.status == "foreign":
+        click.echo(f"note: {path} was not installed by jzr; it is left as it is")
+    elif old:
+        if outcome.status == "removed":
+            verb = "would remove" if dry_run else "removed"
+            click.echo(f"{verb} the old {outcome.target.name} skill -> {_where(outcome)}")
+    else:
+        click.echo(_line(outcome, dry_run))
+    return outcome
+
+
+def _where(outcome: Outcome) -> str:
+    return f"{outcome.target.path} ({', '.join(outcome.target.agents)})"
+
+
 def _line(outcome: Outcome, dry_run: bool) -> str:
-    where = f"{outcome.target.path} ({', '.join(outcome.target.agents)})"
+    where = _where(outcome)
+    name = outcome.target.name
     if outcome.status == "current":
-        return f"jzr skill {__version__} is already installed: {where}"
+        return f"{name} skill {__version__} is already installed: {where}"
     if outcome.status == "absent":
-        return f"no jzr skill at {where}"
+        return f"no {name} skill at {where}"
     if outcome.status == "removed":
-        return f"{'would remove' if dry_run else 'removed'} jzr skill -> {where}"
+        return f"{'would remove' if dry_run else 'removed'} {name} skill -> {where}"
     if outcome.status == "installed":
-        return f"{'would install' if dry_run else 'installed'} jzr skill {__version__} -> {where}"
+        return f"{'would install' if dry_run else 'installed'} {name} skill {__version__} -> {where}"
     if outcome.detail == __version__:
         change = __version__
     elif outcome.detail[:1].isdigit():
@@ -191,7 +234,7 @@ def _line(outcome: Outcome, dry_run: bool) -> str:
     else:
         # Unknown, or something in the marker that is not a version.
         change = f"to {__version__}"
-    return f"{'would update' if dry_run else 'updated'} jzr skill {change} -> {where}"
+    return f"{'would update' if dry_run else 'updated'} {name} skill {change} -> {where}"
 
 
 def _exit(outcomes: list[Outcome], mcp_ok: bool) -> None:

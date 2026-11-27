@@ -175,7 +175,7 @@ jzr bind add tunnel ngrok http 5173               # then run it as: jzr tunnel
 ## Use it from AI agents
 
 ```bash
-jzr agent install          # a skill for Claude Code, Codex and Cursor
+jzr agent install          # skills for Claude Code, Codex and Cursor
 jzr agent install --mcp    # plus an MCP server, for apps without a shell
 ```
 

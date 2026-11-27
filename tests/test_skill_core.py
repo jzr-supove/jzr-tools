@@ -1,5 +1,6 @@
-"""Tests for the skill installer's core: the packaged folder, the file listing
-and digest, where the skill goes for each agent, and install and remove.
+"""Tests for the skill installer's core: the packaged folders, the file listing
+and digest, where the four skills go for each agent, and install, remove and
+the removal of the old single skill.
 
 Everything lives in temporary folders (home, project, a small fake source), so
 nothing touches the real ``~/.claude``, ``~/.agents`` or ``~/.codex``. Renames
@@ -34,6 +35,11 @@ from jzr_tools.core.skill import (
     source_dir,
     targets,
 )
+
+# Names that do not exist yet in the core are reached through ``skill.`` so that
+# each test fails on its own instead of the whole module failing to import.
+NAMES = ("jzr-media", "jzr-pdf", "jzr-data", "jzr-system")
+OLD_NAME = "jzr"
 
 NO_AGENT = (
     "no AI agent found (looked for ~/.claude, ~/.codex and ~/.cursor); "
@@ -134,7 +140,7 @@ class SkillCase(unittest.TestCase):
         self.project = self.root / "project"
         self.project.mkdir()
         self.src = write_tree(self.root / "src", SOURCE)
-        self.target = Target(("claude",), self.home / ".claude" / "skills" / "jzr")
+        self.target = Target(("claude",), self.home / ".claude" / "skills" / "jzr-media")
 
     def source_v2(self) -> Path:
         return write_tree(self.root / "src2", SOURCE_V2)
@@ -148,7 +154,7 @@ class SkillCase(unittest.TestCase):
 
     def make_link(self, kind: str) -> Path:
         """Make target.path a link to a real jzr install elsewhere; return that folder."""
-        real = Target(("claude",), self.root / "elsewhere" / "jzr")
+        real = Target(("claude",), self.root / "elsewhere" / self.target.path.name)
         self.assertEqual(install(real, "1.0.0", source=self.src).status, "installed")
         self.target.path.parent.mkdir(parents=True)
         if kind == "symlink":
@@ -171,10 +177,52 @@ class SkillCase(unittest.TestCase):
         return real.path
 
 
+class NamesTests(unittest.TestCase):
+    def test_the_four_skills_in_order(self):
+        self.assertEqual(skill.SKILL_NAMES, NAMES)
+
+    def test_the_old_single_skill(self):
+        self.assertEqual(skill.OLD_SKILL_NAMES, (OLD_NAME,))
+
+    def test_the_old_name_is_not_one_of_the_four(self):
+        self.assertFalse(set(skill.SKILL_NAMES) & set(skill.OLD_SKILL_NAMES))
+
+
+class SkillsDirTests(unittest.TestCase):
+    def test_points_at_the_folder_that_holds_the_packaged_skills(self):
+        expected = Path(jzr_tools.__file__).resolve().parent / "data" / "skill"
+        self.assertEqual(Path(skill.skills_dir()).resolve(), expected)
+
+
 class SourceDirTests(unittest.TestCase):
-    def test_points_at_the_packaged_skill_folder(self):
-        expected = Path(jzr_tools.__file__).resolve().parent / "data" / "skill" / "jzr"
-        self.assertEqual(Path(source_dir()).resolve(), expected)
+    def test_each_skill_is_a_folder_of_the_skills_dir(self):
+        base = Path(jzr_tools.__file__).resolve().parent / "data" / "skill"
+        for name in NAMES:
+            with self.subTest(name=name):
+                self.assertEqual(Path(source_dir(name)).resolve(), base / name)
+
+    def test_follows_skills_dir(self):
+        with mock.patch.object(
+            skill, "skills_dir", return_value=Path("/somewhere/else"), create=True
+        ):
+            self.assertEqual(Path(source_dir("jzr-pdf")), Path("/somewhere/else") / "jzr-pdf")
+
+    def test_a_name_that_is_not_one_of_the_four_is_a_skill_error(self):
+        # The old skill is not packaged any more; the others are not skills at all.
+        for name in ("jzr", "bogus", "", "JZR-MEDIA", "jzr-media/", "../jzr-media", "template.md"):
+            with self.subTest(name=name):
+                with self.assertRaises(SkillError):
+                    source_dir(name)
+
+    def test_an_unknown_name_is_refused_even_when_a_folder_of_that_name_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "jzr").mkdir()
+            (Path(tmp) / "extra").mkdir()
+            with mock.patch.object(skill, "skills_dir", return_value=Path(tmp), create=True):
+                for name in ("jzr", "extra"):
+                    with self.subTest(name=name):
+                        with self.assertRaises(SkillError):
+                            source_dir(name)
 
 
 class ImportTests(unittest.TestCase):
@@ -249,6 +297,22 @@ class DigestTests(SkillCase):
         self.assertNotEqual(digest(SOURCE), digest(fewer))
 
 
+def skill_folder(base: Path, agent: str) -> Path:
+    """The skills folder an agent reads under ``base``."""
+    return base / (".claude" if agent == "claude" else ".agents") / "skills"
+
+
+class TargetNameTests(unittest.TestCase):
+    def test_name_is_the_last_part_of_the_path(self):
+        for name in (*NAMES, OLD_NAME):
+            with self.subTest(name=name):
+                self.assertEqual(Target(("claude",), Path("/h/.claude/skills") / name).name, name)
+
+    def test_the_name_does_not_depend_on_the_agents(self):
+        path = Path("/h/.agents/skills/jzr-data")
+        self.assertEqual(Target(("codex", "cursor"), path).name, "jzr-data")
+
+
 class TargetsTests(SkillCase):
     def home_dirs(self, *names: str, file_names: tuple[str, ...] = ()) -> None:
         for name in names:
@@ -256,60 +320,64 @@ class TargetsTests(SkillCase):
         for name in file_names:
             (self.home / name).write_text("not a folder")
 
-    def claude_target(self, base: Path) -> Target:
-        return Target(("claude",), base / ".claude" / "skills" / "jzr")
+    def claude_targets(self, base: Path) -> list[Target]:
+        return [Target(("claude",), skill_folder(base, "claude") / name) for name in NAMES]
 
-    def agents_target(self, base: Path, *agents: str) -> Target:
-        return Target(tuple(agents), base / ".agents" / "skills" / "jzr")
+    def agents_targets(self, base: Path, *agents: str) -> list[Target]:
+        return [Target(tuple(agents), skill_folder(base, "codex") / name) for name in NAMES]
+
+    def test_there_are_four_targets_per_folder_in_the_order_of_the_names(self):
+        result = targets(self.home, agent="claude")
+        self.assertEqual([t.name for t in result], list(NAMES))
+        self.assertEqual({t.path.parent for t in result}, {self.home / ".claude" / "skills"})
 
     def test_project_alone_means_claude_without_detection(self):
         self.home_dirs(".codex", ".cursor")
         self.assertEqual(
-            targets(self.home, project=self.project), [self.claude_target(self.project)]
+            targets(self.home, project=self.project), self.claude_targets(self.project)
         )
 
     def test_project_with_claude(self):
         self.assertEqual(
             targets(self.home, agent="claude", project=self.project),
-            [self.claude_target(self.project)],
+            self.claude_targets(self.project),
         )
 
     def test_project_with_codex_uses_the_agents_folder(self):
         self.assertEqual(
             targets(self.home, agent="codex", project=self.project),
-            [self.agents_target(self.project, "codex")],
+            self.agents_targets(self.project, "codex"),
         )
 
     def test_project_targets_need_no_existing_folders(self):
         result = targets(self.home, agent="codex", project=self.project)
-        self.assertFalse(result[0].path.parent.exists())
+        self.assertEqual(len(result), 4)
+        self.assertFalse(any(t.path.parent.exists() for t in result))
         self.assertEqual(os.listdir(self.project), [])
 
     def test_agent_claude_without_its_home_folder(self):
         self.assertFalse((self.home / ".claude").exists())
-        self.assertEqual(targets(self.home, agent="claude"), [self.claude_target(self.home)])
+        self.assertEqual(targets(self.home, agent="claude"), self.claude_targets(self.home))
 
     def test_agent_codex_without_its_home_folder(self):
-        self.assertEqual(
-            targets(self.home, agent="codex"), [self.agents_target(self.home, "codex")]
-        )
+        self.assertEqual(targets(self.home, agent="codex"), self.agents_targets(self.home, "codex"))
 
     def test_agent_named_ignores_other_agents_found(self):
         self.home_dirs(".claude", ".codex")
-        self.assertEqual(targets(self.home, agent="claude"), [self.claude_target(self.home)])
+        self.assertEqual(targets(self.home, agent="claude"), self.claude_targets(self.home))
 
     def test_detection_in_every_combination(self):
-        claude = self.claude_target(self.home)
+        claude = self.claude_targets(self.home)
         cases = {
-            (".claude",): [claude],
-            (".codex",): [self.agents_target(self.home, "codex")],
-            (".cursor",): [self.agents_target(self.home, "cursor")],
-            (".claude", ".codex"): [claude, self.agents_target(self.home, "codex")],
-            (".claude", ".cursor"): [claude],
-            (".codex", ".cursor"): [self.agents_target(self.home, "codex", "cursor")],
+            (".claude",): claude,
+            (".codex",): self.agents_targets(self.home, "codex"),
+            (".cursor",): self.agents_targets(self.home, "cursor"),
+            (".claude", ".codex"): [*claude, *self.agents_targets(self.home, "codex")],
+            (".claude", ".cursor"): claude,
+            (".codex", ".cursor"): self.agents_targets(self.home, "codex", "cursor"),
             (".claude", ".codex", ".cursor"): [
-                claude,
-                self.agents_target(self.home, "codex", "cursor"),
+                *claude,
+                *self.agents_targets(self.home, "codex", "cursor"),
             ],
         }
         for names, expected in cases.items():
@@ -338,17 +406,107 @@ class TargetsTests(SkillCase):
 
     def test_a_claude_file_is_skipped_while_a_codex_folder_counts(self):
         self.home_dirs(".codex", file_names=(".claude",))
-        self.assertEqual(targets(self.home), [self.agents_target(self.home, "codex")])
+        self.assertEqual(targets(self.home), self.agents_targets(self.home, "codex"))
 
     def test_a_cursor_file_adds_nothing_next_to_codex(self):
         self.home_dirs(".codex", file_names=(".cursor",))
-        self.assertEqual(targets(self.home), [self.agents_target(self.home, "codex")])
+        self.assertEqual(targets(self.home), self.agents_targets(self.home, "codex"))
 
     def test_does_not_create_anything(self):
         self.home_dirs(".claude")
         before = snapshot(self.home)
         targets(self.home)
         self.assertEqual(snapshot(self.home), before)
+
+
+class OldTargetsTests(SkillCase):
+    """``old_targets`` names the old skill in the very folders ``targets`` uses."""
+
+    def old(self, agents: tuple[str, ...], base: Path) -> Target:
+        return Target(
+            agents, skill_folder(base, "claude" if agents == ("claude",) else "codex") / OLD_NAME
+        )
+
+    def home_dirs(self, *names: str) -> None:
+        for name in names:
+            (self.home / name).mkdir()
+
+    def test_one_target_called_jzr_for_a_folder(self):
+        self.assertEqual(
+            skill.old_targets(self.home, agent="claude"), [self.old(("claude",), self.home)]
+        )
+
+    def test_project_alone_means_claude_without_detection(self):
+        self.home_dirs(".codex", ".cursor")
+        self.assertEqual(
+            skill.old_targets(self.home, project=self.project),
+            [self.old(("claude",), self.project)],
+        )
+
+    def test_project_with_codex_uses_the_agents_folder(self):
+        self.assertEqual(
+            skill.old_targets(self.home, agent="codex", project=self.project),
+            [self.old(("codex",), self.project)],
+        )
+
+    def test_agent_codex_without_its_home_folder(self):
+        self.assertEqual(
+            skill.old_targets(self.home, agent="codex"), [self.old(("codex",), self.home)]
+        )
+
+    def test_agent_named_ignores_other_agents_found(self):
+        self.home_dirs(".claude", ".codex")
+        self.assertEqual(
+            skill.old_targets(self.home, agent="claude"), [self.old(("claude",), self.home)]
+        )
+
+    def test_detection_in_every_combination(self):
+        claude = ("claude",)
+        cases = {
+            (".claude",): [claude],
+            (".codex",): [("codex",)],
+            (".cursor",): [("cursor",)],
+            (".claude", ".codex"): [claude, ("codex",)],
+            (".claude", ".cursor"): [claude],
+            (".codex", ".cursor"): [("codex", "cursor")],
+            (".claude", ".codex", ".cursor"): [claude, ("codex", "cursor")],
+        }
+        for names, expected in cases.items():
+            with self.subTest(found=names):
+                home = self.root / ("home-" + "-".join(n.strip(".") for n in names))
+                home.mkdir()
+                for name in names:
+                    (home / name).mkdir()
+                want = [
+                    Target(
+                        agents,
+                        skill_folder(home, "claude" if agents == claude else "codex") / OLD_NAME,
+                    )
+                    for agents in expected
+                ]
+                self.assertEqual(skill.old_targets(home), want)
+
+    def test_they_sit_in_the_same_folders_as_the_four_skills(self):
+        self.home_dirs(".claude", ".codex", ".cursor")
+        new = targets(self.home)
+        old = skill.old_targets(self.home)
+        self.assertEqual(
+            [(t.agents, t.path.parent) for t in old],
+            [(t.agents, t.path.parent) for t in new if t.name == "jzr-media"],
+        )
+
+    def test_nothing_found_is_the_same_error(self):
+        with self.assertRaises(SkillError) as caught:
+            skill.old_targets(self.home)
+        self.assertEqual(str(caught.exception), NO_AGENT)
+
+    def test_does_not_create_anything(self):
+        self.home_dirs(".claude")
+        before = snapshot(self.home)
+        skill.old_targets(self.home)
+        skill.old_targets(self.home, agent="codex", project=self.project)
+        self.assertEqual(snapshot(self.home), before)
+        self.assertEqual(os.listdir(self.project), [])
 
 
 class InstallFreshTests(SkillCase):
@@ -390,14 +548,80 @@ class InstallFreshTests(SkillCase):
         install(self.target, "1.0.0", source=self.src)
         self.assertTrue(self.target.path.is_dir())
 
-    def test_default_source_is_the_packaged_folder(self):
+    def test_default_source_is_the_packaged_folder_of_that_skill(self):
         outcome = install(self.target, "1.0.0")
         self.assertEqual(outcome.status, "installed", outcome)
-        self.assertEqual(files(self.target.path), files(source_dir()))
+        packaged = files(source_dir("jzr-media"))
+        self.assertIn("SKILL.md", packaged)
+        self.assertEqual(files(self.target.path), packaged)
 
     def test_no_temp_folder_is_left_beside_the_target(self):
         install(self.target, "1.0.0", source=self.src)
-        self.assertEqual(os.listdir(self.target.path.parent), ["jzr"])
+        self.assertEqual(os.listdir(self.target.path.parent), ["jzr-media"])
+
+
+class InstallDefaultSourceTests(SkillCase):
+    """Without ``source=``, a target gets the packaged folder of its own name."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.packaged = self.root / "packaged"
+        for name in NAMES:
+            write_tree(
+                self.packaged / name,
+                {
+                    "SKILL.md": f"---\nname: {name}\n---\nOnly {name}.\n".encode(),
+                    f"reference/{name}.md": f"# {name}\n".encode(),
+                },
+            )
+
+    def target_named(self, name: str) -> Target:
+        return Target(("claude",), self.home / ".claude" / "skills" / name)
+
+    def test_each_target_gets_the_folder_of_its_own_name(self):
+        with mock.patch.object(skill, "skills_dir", return_value=self.packaged, create=True):
+            for name in NAMES:
+                with self.subTest(name=name):
+                    target = self.target_named(name)
+                    outcome = install(target, "1.0.0")
+                    self.assertEqual(outcome.status, "installed", outcome)
+                    self.assertEqual(files(target.path), files(self.packaged / name))
+                    self.assertIn(f"Only {name}.".encode(), files(target.path)["SKILL.md"])
+
+    def test_the_four_installs_are_independent_folders_with_their_own_marker(self):
+        with mock.patch.object(skill, "skills_dir", return_value=self.packaged, create=True):
+            for name in NAMES:
+                install(self.target_named(name), "1.0.0")
+        for name in NAMES:
+            with self.subTest(name=name):
+                marker = (
+                    (self.target_named(name).path / MARKER).read_text(encoding="utf-8").split("\n")
+                )
+                self.assertEqual(marker[0], "1.0.0")
+                self.assertEqual(marker[1], digest(files(self.packaged / name)))
+        self.assertEqual(sorted(os.listdir(self.home / ".claude" / "skills")), sorted(NAMES))
+
+    def test_the_source_is_asked_for_by_the_name_of_the_target(self):
+        asked: list[str] = []
+
+        def fake(name: str) -> Path:
+            asked.append(name)
+            return self.packaged / name
+
+        with mock.patch.object(skill, "source_dir", side_effect=fake):
+            install(self.target_named("jzr-pdf"), "1.0.0")
+        self.assertEqual(asked, ["jzr-pdf"])
+        self.assertEqual(files(self.target_named("jzr-pdf").path), files(self.packaged / "jzr-pdf"))
+
+    def test_a_second_install_of_the_same_skill_is_current(self):
+        with mock.patch.object(skill, "skills_dir", return_value=self.packaged, create=True):
+            self.assertEqual(install(self.target_named("jzr-data"), "1.0.0").status, "installed")
+            self.assertEqual(install(self.target_named("jzr-data"), "1.0.0").status, "current")
+
+    def test_an_explicit_source_wins_over_the_packaged_folder(self):
+        with mock.patch.object(skill, "skills_dir", return_value=self.packaged, create=True):
+            install(self.target_named("jzr-pdf"), "1.0.0", source=self.src)
+        self.assertEqual(files(self.target_named("jzr-pdf").path), SOURCE)
 
 
 class InstallDecisionTests(SkillCase):
@@ -437,7 +661,7 @@ class InstallDecisionTests(SkillCase):
     def test_update_leaves_no_temp_folder(self):
         self.installed("1.0.0")
         install(self.target, "1.1.0", source=self.source_v2())
-        self.assertEqual(os.listdir(self.target.path.parent), ["jzr"])
+        self.assertEqual(os.listdir(self.target.path.parent), ["jzr-media"])
 
     def test_newer_installed_version_is_refused(self):
         self.installed("2.0.0")
@@ -462,7 +686,7 @@ class InstallDecisionTests(SkillCase):
         self.assertEqual(newer.status, "refused")
         self.assertIn("newer jzr (0.10.0)", newer.detail)
         # And the other way round: 0.9.0 installed, 0.10.0 running.
-        other = Target(("claude",), self.root / "other" / "jzr")
+        other = Target(("claude",), self.root / "other" / "jzr-media")
         install(other, "0.9.0", source=self.src)
         self.assertEqual(install(other, "0.10.0", source=self.source_v2()).status, "updated")
 
@@ -639,7 +863,7 @@ class InstallFailureTests(SkillCase):
         self.assertEqual(outcome.status, "failed")
         self.assertTrue(outcome.detail)
         self.assertEqual(snapshot(self.target.path), before)
-        self.assertEqual(os.listdir(self.target.path.parent), ["jzr"])
+        self.assertEqual(os.listdir(self.target.path.parent), ["jzr-media"])
 
     def test_the_old_copy_is_still_a_valid_install_after_a_failure(self):
         self.installed("1.0.0")
@@ -745,10 +969,141 @@ class RemoveTests(SkillCase):
         self.assertEqual(remove(self.target).status, "absent")
 
 
+class RemoveOldTests(SkillCase):
+    """``remove_old`` is ``remove`` except that what jzr did not install is "foreign", not "refused"."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.target = Target(("claude",), self.home / ".claude" / "skills" / OLD_NAME)
+
+    def test_missing_target_is_absent(self):
+        outcome = skill.remove_old(self.target)
+        self.assertEqual((outcome.status, outcome.detail), ("absent", ""))
+        self.assertEqual(outcome.target, self.target)
+        self.assertEqual(snapshot(self.home), {})
+
+    def test_installed_copy_is_removed_and_parents_and_siblings_stay(self):
+        self.installed("0.2.0")
+        sibling = self.target.path.parent / "jzr-media"
+        write_tree(sibling, {"SKILL.md": b"new\n"})
+        outcome = skill.remove_old(self.target)
+        self.assertEqual((outcome.status, outcome.detail), ("removed", ""))
+        self.assertFalse(os.path.lexists(self.target.path))
+        self.assertTrue(self.target.path.parent.is_dir())
+        self.assertEqual((sibling / "SKILL.md").read_bytes(), b"new\n")
+        self.assertEqual(leftovers(self.target.path.parent), [])
+
+    def test_a_copy_from_a_newer_or_unparsable_version_is_still_removed(self):
+        for version in ("9.0.0", "banana"):
+            with self.subTest(version=version):
+                other = Target(("claude",), self.root / f"v-{version}" / OLD_NAME)
+                install(other, version, source=self.src)
+                self.assertEqual(skill.remove_old(other).status, "removed")
+
+    def test_edited_copy_is_refused_not_foreign_and_kept(self):
+        self.installed("0.2.0")
+        self.edit_installed()
+        outcome = skill.remove_old(self.target)
+        self.assertEqual((outcome.status, outcome.detail), ("refused", EDITED_REMOVE))
+        self.assertEqual((self.target.path / "SKILL.md").read_bytes(), b"edited by the user\n")
+
+    def test_an_added_file_counts_as_edited(self):
+        self.installed("0.2.0")
+        (self.target.path / "mine.md").write_text("extra")
+        self.assertEqual(skill.remove_old(self.target).status, "refused")
+
+    def test_edited_copy_is_removed_with_overwrite(self):
+        self.installed("0.2.0")
+        self.edit_installed()
+        outcome = skill.remove_old(self.target, overwrite=True)
+        self.assertEqual(outcome.status, "removed")
+        self.assertFalse(os.path.lexists(self.target.path))
+        self.assertTrue(self.target.path.parent.is_dir())
+
+    def test_a_folder_without_marker_is_foreign_and_untouched(self):
+        write_tree(self.target.path, {"SKILL.md": b"someone else's skill\n"})
+        before = snapshot(self.target.path)
+        for overwrite in (False, True):
+            with self.subTest(overwrite=overwrite):
+                outcome = skill.remove_old(self.target, overwrite=overwrite)
+                self.assertEqual(outcome.status, "foreign", outcome)
+                self.assertEqual(outcome.target, self.target)
+                self.assertEqual(snapshot(self.target.path), before)
+
+    def test_a_folder_with_an_unusable_marker_is_foreign(self):
+        for data in (b"", b"\xff\xfe\x00\x01", b"1.0.0\n"):
+            with self.subTest(marker=data):
+                other = Target(("claude",), self.root / f"m{len(data)}" / OLD_NAME)
+                write_tree(other.path, {"SKILL.md": b"x\n", MARKER: data})
+                self.assertEqual(skill.remove_old(other).status, "foreign")
+                self.assertTrue((other.path / "SKILL.md").exists())
+
+    def test_a_plain_file_is_foreign_with_or_without_overwrite(self):
+        self.target.path.parent.mkdir(parents=True)
+        self.target.path.write_text("a file")
+        for overwrite in (False, True):
+            with self.subTest(overwrite=overwrite):
+                outcome = skill.remove_old(self.target, overwrite=overwrite)
+                self.assertEqual(outcome.status, "foreign", outcome)
+                self.assertEqual(self.target.path.read_text(), "a file")
+
+    def check_link_is_foreign(self, kind: str) -> None:
+        real = self.make_link(kind)
+        before = snapshot(real)
+        for overwrite in (False, True):
+            with self.subTest(overwrite=overwrite):
+                outcome = skill.remove_old(self.target, overwrite=overwrite)
+                self.assertEqual(outcome.status, "foreign", outcome)
+                self.assertEqual(snapshot(real), before)
+                self.assertTrue(os.path.lexists(self.target.path))
+        self.assertEqual(files(real), SOURCE)
+
+    def test_symlink_is_foreign_and_its_target_survives(self):
+        self.check_link_is_foreign("symlink")
+
+    def test_junction_is_foreign_and_its_target_survives(self):
+        self.check_link_is_foreign("junction")
+
+    def test_dry_run_reports_removed_and_deletes_nothing(self):
+        self.installed("0.2.0")
+        before = snapshot(self.home)
+        self.assertEqual(skill.remove_old(self.target, dry_run=True).status, "removed")
+        self.assertEqual(snapshot(self.home), before)
+
+    def test_dry_run_gives_the_same_absence_refusal_and_foreign(self):
+        self.assertEqual(skill.remove_old(self.target, dry_run=True).status, "absent")
+        self.installed("0.2.0")
+        self.edit_installed()
+        self.assertEqual(skill.remove_old(self.target, dry_run=True).status, "refused")
+        other = Target(("claude",), self.root / "foreign" / OLD_NAME)
+        write_tree(other.path, {"SKILL.md": b"x\n"})
+        self.assertEqual(skill.remove_old(other, dry_run=True).status, "foreign")
+
+    def test_a_failure_is_reported_not_raised(self):
+        self.installed("0.2.0")
+        before = snapshot(self.target.path)
+        with failing_rename(1):
+            outcome = skill.remove_old(self.target)
+        self.assertEqual(outcome.status, "failed")
+        self.assertTrue(outcome.detail)
+        self.assertEqual(snapshot(self.target.path), before)
+
+    def test_removing_twice_ends_absent(self):
+        self.installed("0.2.0")
+        self.assertEqual(skill.remove_old(self.target).status, "removed")
+        self.assertEqual(skill.remove_old(self.target).status, "absent")
+
+    def test_remove_itself_still_refuses_what_is_not_ours(self):
+        write_tree(self.target.path, {"SKILL.md": b"not ours\n"})
+        outcome = remove(self.target)
+        self.assertEqual((outcome.status, outcome.detail), ("refused", NOT_OURS_REMOVE))
+
+
 class PublicNamesTests(unittest.TestCase):
     def test_marker_and_names(self):
         self.assertEqual(skill.MARKER, ".jzr-version")
-        self.assertEqual(skill.SKILL_NAME, "jzr")
+        self.assertEqual(skill.SKILL_NAMES, NAMES)
+        self.assertEqual(skill.OLD_SKILL_NAMES, (OLD_NAME,))
         self.assertEqual(skill.AGENTS, ("claude", "codex"))
 
 
