@@ -9,9 +9,10 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .split_skill import SPLIT_SKILLS
+from .arms import SKILLS
 
 JZR_MCP_PREFIX = "mcp__jzr__"
+OLD_SKILL = "jzr"
 
 
 @dataclass
@@ -42,8 +43,8 @@ def _bare(name: str) -> str:
 
 
 def is_jzr_skill(name: str) -> bool:
-    """The jzr skill or one of the split arm's skills, also with a plugin prefix."""
-    return _bare(name) == "jzr" or _bare(name) in SPLIT_SKILLS
+    """One of jzr's skills, or the single `jzr` skill of earlier versions; also with a plugin prefix."""
+    return _bare(name) == OLD_SKILL or _bare(name) in SKILLS
 
 
 def _events(lines: Iterable[str]) -> Iterable[dict[str, Any]]:
@@ -156,24 +157,25 @@ def check_isolation(arm: str, init: dict | None) -> list[str]:
     tools = [str(t) for t in init.get("tools") or []]
     servers = [s for s in init.get("mcp_servers") or [] if isinstance(s, dict)]
 
-    has_skill = any(_bare(s) == "jzr" for s in skills)
-    split_seen = {_bare(s) for s in skills if _bare(s) in SPLIT_SKILLS}
+    old_skill = any(_bare(s) == OLD_SKILL for s in skills)
+    seen = {_bare(s) for s in skills if _bare(s) in SKILLS}
     jzr_tools = [t for t in tools if t.startswith(JZR_MCP_PREFIX)]
     jzr_servers = [s for s in servers if s.get("name") == "jzr"]
 
     problems: list[str] = []
-    if arm != "split" and split_seen:
-        problems.append(f"{arm} arm can see split skills ({', '.join(sorted(split_seen))})")
+    if old_skill:
+        problems.append(f"{arm} arm can see the old jzr skill")
     if arm == "baseline":
-        if has_skill:
-            problems.append("baseline can see a jzr skill")
+        if seen:
+            problems.append(f"baseline can see jzr skills ({', '.join(sorted(seen))})")
         if jzr_servers:
             problems.append("baseline has a jzr MCP server")
         if jzr_tools:
             problems.append(f"baseline has jzr MCP tools ({len(jzr_tools)})")
     elif arm == "skill":
-        if not has_skill:
-            problems.append("skill arm does not show the jzr skill")
+        missing = SKILLS - seen
+        if missing:
+            problems.append(f"skill arm does not show {', '.join(sorted(missing))}")
         if jzr_tools:
             problems.append(f"skill arm has jzr MCP tools ({len(jzr_tools)})")
         if jzr_servers:
@@ -184,18 +186,8 @@ def check_isolation(arm: str, init: dict | None) -> list[str]:
             problems.append(f"mcp arm: the jzr server is not connected ({status})")
         if not jzr_tools:
             problems.append("mcp arm has no mcp__jzr__ tools")
-        if has_skill:
-            problems.append("mcp arm can see a jzr skill")
-    elif arm == "split":
-        missing = SPLIT_SKILLS - split_seen
-        if missing:
-            problems.append(f"split arm does not show {', '.join(sorted(missing))}")
-        if has_skill:
-            problems.append("split arm can see the jzr skill")
-        if jzr_tools:
-            problems.append(f"split arm has jzr MCP tools ({len(jzr_tools)})")
-        if jzr_servers:
-            problems.append("split arm has a jzr MCP server")
+        if seen:
+            problems.append(f"mcp arm can see jzr skills ({', '.join(sorted(seen))})")
     else:
         problems.append(f"unknown arm {arm!r}")
     return problems

@@ -11,7 +11,7 @@ from typing import Any
 JZR_TOOLS = ["mcp__jzr__video_gif", "mcp__jzr__video_info", "mcp__jzr__hash"]
 BASE_TOOLS = ["Task", "Bash", "Edit", "Read", "Skill", "Write", "WebFetch"]
 OTHER_SKILLS = ["deep-research", "design", "debug", "verify"]
-SPLIT_SKILLS = ["jzr-media", "jzr-pdf", "jzr-data", "jzr-system"]
+JZR_SKILLS = ["jzr-media", "jzr-pdf", "jzr-data", "jzr-system"]  # the four packaged skills
 
 
 def init_event(
@@ -41,14 +41,12 @@ def init_for_arm(arm: str) -> dict[str, Any]:
     if arm == "baseline":
         return init_event()
     if arm == "skill":
-        return init_event(skills=["jzr", *OTHER_SKILLS])
+        return init_event(skills=[*JZR_SKILLS, *OTHER_SKILLS])
     if arm == "mcp":
         return init_event(
             tools=BASE_TOOLS + JZR_TOOLS,
             mcp_servers=[{"name": "jzr", "status": "connected", "source": "dynamic"}],
         )
-    if arm == "split":
-        return init_event(skills=[*SPLIT_SKILLS, *OTHER_SKILLS])
     raise AssertionError(arm)
 
 
@@ -60,6 +58,49 @@ def assistant_event(*blocks: dict[str, Any]) -> dict[str, Any]:
             "role": "assistant",
             "model": "claude-sonnet-5-5",
             "content": list(blocks),
+        },
+        "session_id": "1bf6f025-3c47-49f2-bfe4-b241acb691ae",
+    }
+
+
+def assistant_usage_event(
+    message_id: str,
+    *,
+    model: str = "claude-sonnet-5-5",
+    input_tokens: int = 2,
+    cache_creation: int = 5777,
+    cache_read: int = 11837,
+    output_tokens: int = 16,
+    ephemeral: tuple[int, int] | None = (0, 5777),
+    blocks: tuple[dict[str, Any], ...] = (),
+) -> dict[str, Any]:
+    """An assistant event as the real stream writes it: the message has an id, a model and a usage.
+
+    `ephemeral` is the (5 minute, 1 hour) split of the cache write that the usage's `cache_creation` object carries;
+    None leaves that object out. The same message id may come in several events, one per content block, each
+    with the usage known at that moment.
+    """
+    usage: dict[str, Any] = {
+        "input_tokens": input_tokens,
+        "cache_creation_input_tokens": cache_creation,
+        "cache_read_input_tokens": cache_read,
+        "output_tokens": output_tokens,
+        "service_tier": "standard",
+    }
+    if ephemeral is not None:
+        usage["cache_creation"] = {
+            "ephemeral_5m_input_tokens": ephemeral[0],
+            "ephemeral_1h_input_tokens": ephemeral[1],
+        }
+    return {
+        "type": "assistant",
+        "message": {
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "model": model,
+            "content": list(blocks) or [{"type": "text", "text": "working on it"}],
+            "usage": usage,
         },
         "session_id": "1bf6f025-3c47-49f2-bfe4-b241acb691ae",
     }

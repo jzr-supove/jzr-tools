@@ -19,7 +19,7 @@ class ParseCompleteRunTest(unittest.TestCase):
     def setUp(self) -> None:
         self.lines = fx.to_lines(
             fx.init_for_arm("skill"),
-            fx.assistant_event(fx.text_block("Let me look."), fx.tool_use("Skill", skill="jzr")),
+            fx.assistant_event(fx.text_block("Let me look."), fx.tool_use("Skill", skill="jzr-media")),
             fx.user_tool_result("loaded"),
             fx.assistant_event(
                 fx.bash("jzr video gif clip.mp4 --start 0:02"),
@@ -58,7 +58,7 @@ class ParseCompleteRunTest(unittest.TestCase):
 
     def test_init_event_is_kept(self) -> None:
         self.assertIsNotNone(self.m.init)
-        self.assertIn("jzr", self.m.init["skills"])
+        self.assertEqual(self.m.init["skills"][: len(fx.JZR_SKILLS)], fx.JZR_SKILLS)
         self.assertEqual(self.m.init["model"], "claude-sonnet-5-5")
         self.assertEqual(self.m.init["claude_code_version"], "2.1.332")
 
@@ -76,7 +76,7 @@ class ParseCompleteRunTest(unittest.TestCase):
         )
 
     def test_skills_invoked(self) -> None:
-        self.assertEqual(self.m.skills_invoked, ["jzr"])
+        self.assertEqual(self.m.skills_invoked, ["jzr-media"])
 
     def test_usage_flags(self) -> None:
         self.assertTrue(self.m.used_jzr_cli)
@@ -344,12 +344,12 @@ class CheckIsolationTest(unittest.TestCase):
         return fx.init_event(**base)
 
     def test_good_inits_pass_for_their_arm(self) -> None:
-        for arm in ("baseline", "skill", "mcp", "split"):
+        for arm in ("baseline", "skill", "mcp"):
             with self.subTest(arm=arm):
                 self.assertEqual(check_isolation(arm, fx.init_for_arm(arm)), [])
 
     def test_no_init_event_is_a_problem_in_every_arm(self) -> None:
-        for arm in ("baseline", "skill", "mcp", "split"):
+        for arm in ("baseline", "skill", "mcp"):
             with self.subTest(arm=arm):
                 problems = check_isolation(arm, None)
                 self.assertTrue(problems)
@@ -380,19 +380,83 @@ class CheckIsolationTest(unittest.TestCase):
         )
         self.assertEqual(check_isolation("baseline", init), [])
 
-    # skill: shows the jzr skill, no jzr MCP tool
+    # skill: shows all four skills, no jzr skill, no jzr MCP server or tool
 
-    def test_skill_arm_accepts_a_namespaced_jzr_skill(self) -> None:
-        init = fx.init_event(skills=["jzr-tools:jzr", "debug"])
+    def test_skill_arm_accepts_the_four_skills_with_a_plugin_prefix(self) -> None:
+        init = fx.init_event(skills=[*(f"jzr-tools:{n}" for n in fx.JZR_SKILLS), "debug"])
         self.assertEqual(check_isolation("skill", init), [])
 
-    def test_skill_arm_requires_the_jzr_skill(self) -> None:
+    def test_skill_arm_does_not_mind_the_order_of_the_skills(self) -> None:
+        init = fx.init_event(skills=[*fx.OTHER_SKILLS, *reversed(fx.JZR_SKILLS)])
+        self.assertEqual(check_isolation("skill", init), [])
+
+    def test_skill_arm_requires_every_one_of_the_four(self) -> None:
+        for missing in fx.JZR_SKILLS:
+            with self.subTest(missing=missing):
+                skills = [s for s in fx.JZR_SKILLS if s != missing] + list(fx.OTHER_SKILLS)
+                problems = check_isolation("skill", fx.init_event(skills=skills))
+                self.assertTrue(problems)
+                self.assertTrue(any(missing in p for p in problems), problems)  # the text names it
+
+    def test_skill_arm_names_every_missing_skill(self) -> None:
+        problems = check_isolation("skill", fx.init_event(skills=["jzr-pdf", *fx.OTHER_SKILLS]))
+        for missing in ("jzr-media", "jzr-data", "jzr-system"):
+            with self.subTest(missing=missing):
+                self.assertTrue(any(missing in p for p in problems), problems)
+
+    def test_skill_arm_rejects_no_skills_at_all(self) -> None:
         self.assertTrue(check_isolation("skill", fx.init_event()))
-        self.assertTrue(check_isolation("skill", fx.init_event(skills=["jzr-extra"])))
+        self.assertTrue(check_isolation("skill", fx.init_event(skills=["jzr-extra", "jzr-pdfx"])))
+
+    def test_lookalikes_do_not_stand_in_for_one_of_the_four(self) -> None:
+        skills = ["jzr-media", "jzr-pdf", "jzr-data", "jzr-systemx", "jzr-extra"]
+        self.assertTrue(check_isolation("skill", fx.init_event(skills=skills)))
+
+    def test_lookalikes_next_to_the_four_are_fine(self) -> None:
+        skills = [*fx.JZR_SKILLS, "jzr-extra", "jzr-pdfx", "debug"]
+        self.assertEqual(check_isolation("skill", fx.init_event(skills=skills)), [])
+
+    def test_skill_arm_rejects_the_old_single_skill_next_to_the_four(self) -> None:
+        for old in ("jzr", "jzr-tools:jzr"):
+            with self.subTest(old=old):
+                problems = check_isolation("skill", fx.init_event(skills=[old, *fx.JZR_SKILLS]))
+                self.assertTrue(problems)
+                self.assertFalse(any("unknown arm" in p for p in problems), problems)
+
+    def test_skill_arm_with_only_the_old_single_skill_is_a_problem(self) -> None:
+        self.assertTrue(check_isolation("skill", fx.init_event(skills=["jzr", *fx.OTHER_SKILLS])))
 
     def test_skill_arm_rejects_jzr_mcp_tool(self) -> None:
-        init = fx.init_event(skills=["jzr", "debug"], tools=fx.BASE_TOOLS + ["mcp__jzr__video_gif"])
+        init = fx.init_event(skills=fx.JZR_SKILLS, tools=fx.BASE_TOOLS + ["mcp__jzr__video_gif"])
         self.assertTrue(check_isolation("skill", init))
+
+    def test_skill_arm_accepts_other_mcp_tools_and_servers(self) -> None:
+        init = fx.init_event(
+            skills=fx.JZR_SKILLS,
+            tools=fx.BASE_TOOLS + ["mcp__other__hash"],
+            mcp_servers=[{"name": "other", "status": "connected"}],
+        )
+        self.assertEqual(check_isolation("skill", init), [])
+
+    def test_skill_arm_rejects_a_jzr_mcp_server_whatever_its_status(self) -> None:
+        for status in ("connected", "failed", "pending"):
+            with self.subTest(status=status):
+                init = fx.init_event(skills=fx.JZR_SKILLS, mcp_servers=[{"name": "jzr", "status": status}])
+                self.assertTrue(check_isolation("skill", init))
+
+    def test_skill_arm_reports_every_violated_rule(self) -> None:
+        init = fx.init_event(
+            skills=["jzr", "jzr-pdf"],  # three of the four missing, the old skill present
+            tools=fx.BASE_TOOLS + ["mcp__jzr__hash"],
+            mcp_servers=[{"name": "jzr", "status": "connected"}],
+        )
+        problems = check_isolation("skill", init)
+        self.assertGreaterEqual(len(problems), 4)  # the missing skills, the old skill, the tool, the server
+        for missing in ("jzr-media", "jzr-data", "jzr-system"):
+            self.assertTrue(any(missing in p for p in problems), (missing, problems))
+        self.assertTrue(any("mcp" in p.lower() and "tool" in p.lower() for p in problems), problems)
+        self.assertTrue(any("server" in p.lower() for p in problems), problems)
+        self.assertFalse(any("unknown arm" in p for p in problems), problems)
 
     # mcp: server jzr connected, at least one mcp__jzr__ tool, no jzr skill
 
@@ -444,30 +508,28 @@ class CheckIsolationTest(unittest.TestCase):
     def test_init_from_parse_stream_round_trips(self) -> None:
         from jzr_bench.stream import parse_stream
 
-        for arm in ("baseline", "skill", "mcp", "split"):
+        for arm in ("baseline", "skill", "mcp"):
             with self.subTest(arm=arm):
                 m = parse_stream([json.dumps(fx.init_for_arm(arm))])
                 self.assertEqual(check_isolation(arm, m.init), [])
 
 
-SPLIT = fx.SPLIT_SKILLS
-
-
 class IsJzrSkillTest(unittest.TestCase):
-    def test_the_jzr_skill_with_or_without_a_plugin_prefix(self) -> None:
+    def test_the_old_jzr_skill_with_or_without_a_plugin_prefix(self) -> None:
         for name in ("jzr", "jzr-tools:jzr", "plugin:jzr"):
             with self.subTest(name=name):
                 self.assertTrue(is_jzr_skill(name))
 
-    def test_the_four_split_skills(self) -> None:
-        for name in SPLIT:
+    def test_each_of_the_four_skills(self) -> None:
+        for name in fx.JZR_SKILLS:
             with self.subTest(name=name):
                 self.assertTrue(is_jzr_skill(name))
 
-    def test_a_split_skill_with_a_plugin_prefix(self) -> None:
+    def test_each_of_the_four_with_a_plugin_prefix(self) -> None:
         self.assertTrue(is_jzr_skill("plugin:jzr-pdf"))
-        for name in SPLIT:
+        for name in fx.JZR_SKILLS:
             with self.subTest(name=name):
+                self.assertTrue(is_jzr_skill(f"jzr:{name}"))
                 self.assertTrue(is_jzr_skill(f"jzr-tools:{name}"))
 
     def test_lookalikes_are_not_jzr_skills(self) -> None:
@@ -489,10 +551,10 @@ class IsJzrSkillTest(unittest.TestCase):
                 self.assertFalse(is_jzr_skill(name))
 
 
-class SplitSkillUseTest(unittest.TestCase):
-    def test_a_skill_call_to_a_split_skill_is_jzr_skill_use(self) -> None:
+class JzrSkillUseTest(unittest.TestCase):
+    def test_a_skill_call_to_one_of_the_four_is_jzr_skill_use(self) -> None:
         lines = fx.to_lines(
-            fx.init_for_arm("split"),
+            fx.init_for_arm("skill"),
             fx.assistant_event(fx.tool_use("Skill", skill="jzr-media")),
             fx.result_event(),
         )
@@ -502,11 +564,26 @@ class SplitSkillUseTest(unittest.TestCase):
         self.assertFalse(m.used_jzr_cli)
         self.assertFalse(m.used_jzr_mcp)
 
-    def test_each_split_skill_counts(self) -> None:
-        for name in SPLIT:
-            with self.subTest(name=name):
-                m = parse_stream(fx.to_lines(fx.assistant_event(fx.tool_use("Skill", skill=name))))
-                self.assertTrue(m.used_jzr_skill)
+    def test_each_of_the_four_counts_alone_and_with_a_prefix(self) -> None:
+        for name in fx.JZR_SKILLS:
+            for called in (name, f"jzr-tools:{name}"):
+                with self.subTest(called=called):
+                    m = parse_stream(fx.to_lines(fx.assistant_event(fx.tool_use("Skill", skill=called))))
+                    self.assertTrue(m.used_jzr_skill)
+
+    def test_the_old_jzr_skill_still_counts(self) -> None:
+        m = parse_stream(fx.to_lines(fx.assistant_event(fx.tool_use("Skill", skill="jzr"))))
+        self.assertTrue(m.used_jzr_skill)
+
+    def test_any_one_call_among_others_is_enough(self) -> None:
+        m = parse_stream(
+            fx.to_lines(
+                fx.assistant_event(fx.tool_use("Skill", skill="debug")),
+                fx.assistant_event(fx.tool_use("Skill", skill="jzr-system")),
+            )
+        )
+        self.assertEqual(m.skills_invoked, ["debug", "jzr-system"])
+        self.assertTrue(m.used_jzr_skill)
 
     def test_a_skill_call_to_a_lookalike_or_other_skill_does_not_count(self) -> None:
         for name in ("jzr-extra", "jzr-pdfx", "debug"):
@@ -515,12 +592,10 @@ class SplitSkillUseTest(unittest.TestCase):
                 self.assertEqual(m.skills_invoked, [name])
                 self.assertFalse(m.used_jzr_skill)
 
-    def test_no_skill_call_means_no_skill_use_even_when_the_skills_are_listed(
-        self,
-    ) -> None:
+    def test_no_skill_call_means_no_skill_use_even_when_the_skills_are_listed(self) -> None:
         m = parse_stream(
             fx.to_lines(
-                fx.init_for_arm("split"),
+                fx.init_for_arm("skill"),
                 fx.assistant_event(fx.bash("ls")),
                 fx.result_event(),
             )
@@ -528,124 +603,60 @@ class SplitSkillUseTest(unittest.TestCase):
         self.assertFalse(m.used_jzr_skill)
 
 
-class CheckIsolationSplitTest(unittest.TestCase):
-    """split: the four split skills, no jzr skill, no jzr MCP tool or server. Others: none of the four."""
+class CheckIsolationOtherArmsTest(unittest.TestCase):
+    """baseline and mcp must show none of the four skills; no arm called split exists any more."""
 
     def assertProblem(self, arm: str, init: dict) -> None:
         problems = check_isolation(arm, init)
         self.assertTrue(problems)
         self.assertTrue(all(isinstance(p, str) and p for p in problems))
-        # split is a known arm: the problem must be about the init, not about the arm name
         self.assertFalse(any("unknown arm" in p for p in problems), problems)
 
-    def split_init(self, **overrides):
-        base = {"skills": [*SPLIT, *fx.OTHER_SKILLS]}
-        base.update(overrides)
-        return fx.init_event(**base)
-
-    def test_a_good_init_passes(self) -> None:
-        self.assertEqual(check_isolation("split", self.split_init()), [])
-
-    def test_the_order_of_the_skills_does_not_matter(self) -> None:
-        self.assertEqual(
-            check_isolation("split", self.split_init(skills=[*fx.OTHER_SKILLS, *reversed(SPLIT)])),
-            [],
-        )
-
-    def test_each_split_skill_is_required(self) -> None:
-        for missing in SPLIT:
-            with self.subTest(missing=missing):
-                skills = [s for s in SPLIT if s != missing] + list(fx.OTHER_SKILLS)
-                self.assertProblem("split", self.split_init(skills=skills))
-
-    def test_no_split_skills_at_all_is_a_problem(self) -> None:
-        self.assertProblem("split", self.split_init(skills=list(fx.OTHER_SKILLS)))
-
-    def test_lookalike_skills_do_not_stand_in_for_a_split_skill(self) -> None:
-        skills = ["jzr-media", "jzr-pdf", "jzr-data", "jzr-systemx", "jzr-extra"]
-        self.assertProblem("split", self.split_init(skills=skills))
-
-    def test_lookalike_skills_next_to_the_four_are_fine(self) -> None:
-        skills = [*SPLIT, "jzr-extra", "jzr-pdfx", "debug"]
-        self.assertEqual(check_isolation("split", self.split_init(skills=skills)), [])
-
-    def test_the_jzr_skill_is_a_problem(self) -> None:
-        self.assertProblem("split", self.split_init(skills=["jzr", *SPLIT]))
-        self.assertProblem("split", self.split_init(skills=["jzr-tools:jzr", *SPLIT]))
-
-    def test_a_jzr_mcp_tool_is_a_problem(self) -> None:
-        self.assertProblem("split", self.split_init(tools=fx.BASE_TOOLS + ["mcp__jzr__hash"]))
-
-    def test_other_mcp_tools_are_not(self) -> None:
-        self.assertEqual(
-            check_isolation("split", self.split_init(tools=fx.BASE_TOOLS + ["mcp__other__hash"])),
-            [],
-        )
-
-    def test_a_jzr_mcp_server_is_a_problem_whatever_its_status(self) -> None:
-        for status in ("connected", "failed", "pending"):
-            with self.subTest(status=status):
-                self.assertProblem(
-                    "split",
-                    self.split_init(mcp_servers=[{"name": "jzr", "status": status}]),
-                )
-
-    def test_another_mcp_server_is_not(self) -> None:
-        init = self.split_init(mcp_servers=[{"name": "other", "status": "connected"}])
-        self.assertEqual(check_isolation("split", init), [])
-
-    def test_every_violated_rule_is_reported(self) -> None:
-        init = self.split_init(
-            skills=["jzr", *SPLIT[:2]],  # two split skills missing, jzr present
-            tools=fx.BASE_TOOLS + ["mcp__jzr__hash"],
-            mcp_servers=[{"name": "jzr", "status": "connected"}],
-        )
-        problems = check_isolation("split", init)
-        self.assertGreaterEqual(len(problems), 3)
-        self.assertFalse(any("unknown arm" in p for p in problems), problems)
-
-    def test_other_arms_report_each_split_skill_as_a_problem(self) -> None:
-        for arm in ("baseline", "skill", "mcp"):
-            for name in SPLIT:
+    def test_baseline_and_mcp_report_each_of_the_four_as_a_problem(self) -> None:
+        for arm in ("baseline", "mcp"):
+            for name in fx.JZR_SKILLS:
                 with self.subTest(arm=arm, skill=name):
                     good = fx.init_for_arm(arm)
-                    init = dict(good, skills=[*good["skills"], name])
-                    self.assertProblem(arm, init)
+                    self.assertProblem(arm, dict(good, skills=[*good["skills"], name]))
 
-    def test_other_arms_report_a_prefixed_split_skill(self) -> None:
-        for arm in ("baseline", "skill", "mcp"):
+    def test_baseline_and_mcp_report_a_prefixed_one_of_the_four(self) -> None:
+        for arm in ("baseline", "mcp"):
             with self.subTest(arm=arm):
                 good = fx.init_for_arm(arm)
                 self.assertProblem(arm, dict(good, skills=[*good["skills"], "jzr-tools:jzr-pdf"]))
 
-    def test_the_skill_arm_still_requires_the_jzr_skill(self) -> None:
-        self.assertProblem("skill", fx.init_event(skills=[*SPLIT, *fx.OTHER_SKILLS]))
-        self.assertEqual(check_isolation("skill", fx.init_for_arm("skill")), [])
-
-    def test_the_other_arms_ignore_lookalikes_of_the_split_names(self) -> None:
-        for arm in ("baseline", "skill", "mcp"):
+    def test_baseline_and_mcp_ignore_lookalikes_of_the_four(self) -> None:
+        for arm in ("baseline", "mcp"):
             with self.subTest(arm=arm):
                 good = fx.init_for_arm(arm)
-                self.assertEqual(
-                    check_isolation(
-                        arm,
-                        dict(good, skills=[*good["skills"], "jzr-extra", "jzr-pdfx"]),
-                    ),
-                    [],
-                )
+                init = dict(good, skills=[*good["skills"], "jzr-extra", "jzr-pdfx"])
+                self.assertEqual(check_isolation(arm, init), [])
 
-    def test_a_split_init_is_a_problem_for_the_baseline_skill_and_mcp_arms(
-        self,
-    ) -> None:
-        init = fx.init_for_arm("split")
-        for arm in ("baseline", "skill", "mcp"):
+    def test_the_skill_arms_init_is_a_problem_for_baseline_and_mcp(self) -> None:
+        init = fx.init_for_arm("skill")
+        for arm in ("baseline", "mcp"):
             with self.subTest(arm=arm):
                 self.assertProblem(arm, init)
 
-    def test_the_other_arms_inits_are_a_problem_for_the_split_arm(self) -> None:
-        for arm in ("baseline", "skill", "mcp"):
+    def test_the_baseline_and_mcp_inits_are_a_problem_for_the_skill_arm(self) -> None:
+        for arm in ("baseline", "mcp"):
             with self.subTest(arm=arm):
-                self.assertProblem("split", fx.init_for_arm(arm))
+                self.assertProblem("skill", fx.init_for_arm(arm))
+
+    def test_split_is_an_unknown_arm_whatever_the_init_shows(self) -> None:
+        inits = {
+            "the four skills": fx.init_event(skills=[*fx.JZR_SKILLS, *fx.OTHER_SKILLS]),
+            "nothing": fx.init_event(),
+        }
+        for label, init in inits.items():
+            with self.subTest(init=label):
+                problems = check_isolation("split", init)
+                self.assertTrue(any("unknown arm" in p for p in problems), problems)
+
+    def test_an_unknown_arm_is_a_problem(self) -> None:
+        for arm in ("everything", ""):
+            with self.subTest(arm=arm):
+                self.assertTrue(check_isolation(arm, fx.init_for_arm("baseline")))
 
 
 if __name__ == "__main__":

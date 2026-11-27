@@ -14,6 +14,7 @@ sys.path.insert(0, str(HERE))
 from jzr_bench.report import render_markdown, summarize  # noqa: E402
 
 ROW_KEYS = {
+    "machine",
     "task",
     "arm",
     "runs",
@@ -29,6 +30,13 @@ ROW_KEYS = {
     "median_output_tokens",
     "median_turns",
     "median_duration_s",
+    "min_cost_passed_usd",
+    "max_cost_passed_usd",
+    "cost_minus_hello_usd",
+    "minus_hello_vs_baseline",
+    "median_written_usd",
+    "median_reread_usd",
+    "median_output_usd",
 }
 
 
@@ -269,7 +277,7 @@ class SummarizeMediansTest(unittest.TestCase):
             ]
         )
         for row in rows:
-            for key in ROW_KEYS - {"task", "arm", "runs", "passed", "isolation_failures", "used_jzr"}:
+            for key in ROW_KEYS - {"machine", "task", "arm", "runs", "passed", "isolation_failures", "used_jzr"}:
                 self.assertIsNone(row[key], (row["task"], key))
         self.assertEqual(row_of(rows, "hello", "baseline")["runs"], 1)
 
@@ -430,6 +438,33 @@ class RenderMarkdownTest(unittest.TestCase):
         self.assertLess(self.heading_index("hello"), start_hello)
         self.assertLess(start_hello, self.heading_index("gif"))
         self.assertLess(self.heading_index("gif"), start_gif)
+
+    def test_an_old_split_arm_renders_after_the_known_arms(self) -> None:
+        # a results folder from before the split arm was dropped: its rows still render, last
+        records = []
+        for task, base in (("hello", 0.25), ("gif", 1.25)):
+            records += [
+                rec(task, "split", cost=base + 0.5, jzr=(True, True, False)),  # first in the input on purpose
+                rec(task, "mcp", cost=base + 0.4),
+                rec(task, "skill", cost=base + 0.3),
+                rec(task, "baseline", cost=base),
+            ]
+        text = render_markdown(summarize(records))
+        self.assertNotIn("None", text)
+        tables, current = [], []
+        for ln in text.splitlines():
+            if ln.lstrip().startswith("|"):
+                current.append(ln)
+            elif current:
+                tables.append(current)
+                current = []
+        if current:
+            tables.append(current)
+        with_split = [t for t in tables if any("| split " in ln for ln in t)]
+        self.assertGreaterEqual(len(with_split), 2)  # at least the two per-task tables
+        for table in with_split:
+            order = [next(a for a in ("baseline", "skill", "mcp", "split") if f"| {a} " in ln) for ln in table[2:]]
+            self.assertEqual(order, ["baseline", "skill", "mcp", "split"])
 
     def test_values_land_in_the_table_of_their_task(self) -> None:
         hello_table, gif_table = ("\n".join(t) for t in self.tables())
