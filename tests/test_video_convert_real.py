@@ -18,6 +18,7 @@ from click.testing import CliRunner
 from jzr_tools.cli import app
 
 from media_fixtures import HAVE_FFMPEG, Clips, ffmpeg_run, mp4_tool_names
+from size_fixtures import with_size
 from test_media_cli import describe, err
 
 runner = CliRunner()
@@ -142,7 +143,7 @@ class RealVideoConvertTests(unittest.TestCase):
         (mov,) = self.stage("clip.mov")
         result = self.ok(mov, "--to", "mp4")
         out = self.work / "clip.mp4"
-        self.assertIn("(video copied, audio copied)", result.stdout)
+        self.assertIn(with_size(f"{mov} -> {out} (video copied, audio copied)", out), result.stdout)
         self.assertEqual(video_stream(out)["codec_name"], "h264")
         self.assertEqual(audio_stream(out)["codec_name"], "aac")
         moov, mdat = box_offset(out, b"moov"), box_offset(out, b"mdat")
@@ -156,7 +157,9 @@ class RealVideoConvertTests(unittest.TestCase):
         (mov,) = self.stage("clip.mov")
         result = self.ok(mov, "--to", "webm")
         out = self.work / "clip.webm"
-        self.assertIn("(video encoded to vp9, audio encoded to opus)", result.stdout)
+        self.assertIn(
+            with_size(f"{mov} -> {out} (video encoded to vp9, audio encoded to opus)", out), result.stdout
+        )
         self.assertEqual(video_stream(out)["codec_name"], "vp9")
         self.assertEqual(audio_stream(out)["codec_name"], "opus")
         self.assertIn("webm", ffprobe(out)["format"]["format_name"])

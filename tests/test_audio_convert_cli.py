@@ -22,6 +22,7 @@ from click.testing import CliRunner
 from jzr_tools.cli import app
 
 from media_fixtures import recorded_calls
+from size_fixtures import with_size
 from test_media_cli import describe, err, run_without_tools
 
 runner = CliRunner()
@@ -230,7 +231,7 @@ class OutputFileTests(FakeToolsCase):
         result = self.invoke("convert", song, "-o", target)
         self.assertEqual(result.exit_code, 0, describe(result))
         self.assertTrue(target.is_file())
-        self.assertIn(f"{song} -> {target} (audio encoded to mp3)", result.stdout)
+        self.assertIn(with_size(f"{song} -> {target} (audio encoded to mp3)", target), result.stdout)
 
     def test_the_target_format_is_taken_from_the_output_extension(self) -> None:
         (song,) = self.touch("song.wav")
@@ -343,7 +344,8 @@ class ResultLineTests(FakeToolsCase):
         result = self.invoke("convert", song, "--to", "mp3")
         self.assertEqual(result.exit_code, 0, describe(result))
         lines = result.stdout.splitlines()
-        self.assertIn(f"{song} -> {self.dir / 'song.mp3'} (audio encoded to mp3)", lines)
+        # The stand-in ffmpeg writes the nine bytes of "converted".
+        self.assertIn(f"{song} -> {self.dir / 'song.mp3'} (audio encoded to mp3, 9 B)", lines)
         self.assertIn("ffmpeg: 1 converted", lines)
         self.assertEqual((self.dir / "song.mp3").read_bytes(), b"converted")
         self.assertEqual(err(result), "")
@@ -354,7 +356,7 @@ class ResultLineTests(FakeToolsCase):
         out = self.dir / "out"
         result = self.invoke("convert", song, "--to", "mp3", "--outdir", out)
         self.assertEqual(result.exit_code, 0, describe(result))
-        self.assertIn(f"{song} -> {out / 'song.mp3'} (audio copied)", result.stdout)
+        self.assertIn(with_size(f"{song} -> {out / 'song.mp3'} (audio copied)", out / "song.mp3"), result.stdout)
         (call,) = self.ffmpeg_calls()
         self.assertEqual(plan_of(call)[-4:], ["-c:a", "copy", "-id3v2_version", "3"])
 
@@ -475,7 +477,10 @@ class ListedVideoTests(FakeToolsCase):
         (clip,) = self.touch("clip.mp4")
         result = self.invoke("convert", clip, "--to", "mp3")
         self.assertEqual(result.exit_code, 0, describe(result))
-        self.assertIn(f"{clip} -> {self.dir / 'clip.mp3'} (audio encoded to mp3)", result.stdout)
+        self.assertIn(
+            with_size(f"{clip} -> {self.dir / 'clip.mp3'} (audio encoded to mp3)", self.dir / "clip.mp3"),
+            result.stdout,
+        )
         (call,) = self.ffmpeg_calls()
         self.assertEqual(
             plan_of(call),

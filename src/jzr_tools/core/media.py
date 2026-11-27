@@ -143,6 +143,23 @@ def format_size(size: int) -> str:
     raise AssertionError("unreachable")
 
 
+def with_written_size(details: str, path: str | os.PathLike[str]) -> str:
+    """``details`` with the size of the file written at ``path`` as its last item.
+
+    Result lines end with it so nobody has to look the file up afterwards.
+    Details that already show that size (the compress lines' ``2.1 MB ->
+    492.0 kB``) are returned as they are, and so are they when the file cannot
+    be read.
+    """
+    try:
+        size = format_size(Path(path).stat().st_size)
+    except OSError:
+        return details
+    if re.search(rf"(?<![\d.]){re.escape(size)}", details):
+        return details
+    return f"{details}, {size}" if details else size
+
+
 # --- ffprobe results ---------------------------------------------------------
 
 

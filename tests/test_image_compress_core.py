@@ -918,7 +918,7 @@ class CompressFileTests(TempDirCase):
         self.assertLess(after, before)
         self.assertEqual(
             result.detail,
-            f"{format_size(before)} -> {format_size(after)}, -{percent(before, after)}%",
+            f"{format_size(before)} -> {format_size(after)}, -{percent(before, after)}%, kept 400x300",
         )
 
     def test_the_written_file_is_a_readable_jpeg_of_the_same_size(self) -> None:
@@ -1067,7 +1067,7 @@ class CompressFileTests(TempDirCase):
         self.assertEqual(
             result.detail,
             f"{format_size(before)} -> {format_size(after)}, +{percent(before, after)}%"
-            ", larger than the source",
+            ", larger than the source, kept 400x300",
         )
         with Image.open(target) as image:
             self.assertEqual(image.format, "PNG")

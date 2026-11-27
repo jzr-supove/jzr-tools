@@ -129,6 +129,29 @@ class PlainTextTests(TextCase):
             self.text("a.pdf", "--pages", "1-2").stdout_bytes, self.text("a.pdf").stdout_bytes
         )
 
+    def test_last_is_the_last_page(self) -> None:
+        self.put("a.pdf", tx.build(TWO_PAGES))
+        self.assertEqual(self.text("a.pdf", "--pages", "last").stdout_bytes, b"Page two\n")
+        self.assertEqual(
+            self.text("a.pdf", "--pages", "1-last").stdout_bytes, self.text("a.pdf").stdout_bytes
+        )
+        self.assertEqual(
+            self.text("a.pdf", "--pages", "last,1").stdout_bytes,
+            self.text("a.pdf", "--pages", "2,1").stdout_bytes,
+        )
+
+    def test_last_on_a_one_page_file_is_page_one(self) -> None:
+        self.put("a.pdf", tx.build(TWO_PAGES[:1]))
+        self.assertEqual(
+            self.text("a.pdf", "--pages", "last").stdout_bytes, b"First page\nSecond line\n"
+        )
+
+    def test_markdown_takes_last_too(self) -> None:
+        self.put("a.pdf", tx.build(TWO_PAGES))
+        self.assertEqual(
+            self.text("a.pdf", "--markdown", "--pages", "last").stdout_bytes, b"Page two\n"
+        )
+
     def test_nothing_is_written_beside_the_file_and_the_file_is_not_changed(self) -> None:
         data = tx.build(TWO_PAGES)
         self.put("a.pdf", data)
@@ -406,12 +429,23 @@ class ArgumentTests(TextCase):
         self.assert_usage_error(result, "--page-breaks only applies to --markdown.")
         self.assertEqual(names(self.root), ["a.pdf"])
 
+    def test_last_and_the_page_it_stands_for_make_a_bad_page_list(self) -> None:
+        self.put("a.pdf", tx.build(TWO_PAGES))
+        for pages in ("2,last", "last,last", "Last", "LAST", "end", "1-end", "last-1"):
+            with self.subTest(pages=pages):
+                result = self.text("a.pdf", "--pages", pages)
+                self.assert_usage_error(result, f"--pages: {USAGE_TAIL}")
+                self.assert_usage_error(result, "(pages 1 to 2)")
+                self.assertRegex(flat(result.stderr), r"\blast\b")
+        self.assertEqual(names(self.root), ["a.pdf"])
+
     def test_bad_page_lists_are_usage_errors_naming_the_option(self) -> None:
         self.put("a.pdf", tx.build(TWO_PAGES))
         for pages in ("9", "0", "1-9", "2-1", "1,,2", "a", "1;2", "1,1"):
             with self.subTest(pages=pages):
                 result = self.text("a.pdf", "--pages", pages)
-                self.assert_usage_error(result, f"--pages: {USAGE_TAIL} (pages 1 to 2)")
+                self.assert_usage_error(result, f"--pages: {USAGE_TAIL}")
+                self.assert_usage_error(result, "(pages 1 to 2)")
         self.assertEqual(names(self.root), ["a.pdf"])
 
     def test_a_missing_file_or_no_file_is_a_usage_error(self) -> None:

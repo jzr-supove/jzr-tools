@@ -258,6 +258,9 @@ def _item_text(item: Any) -> str:
     return str(item)
 
 
+_KINDS = ("number", "true/false", "empty", "text")
+
+
 class _Cells:
     """Turns values into cells for one sheet, collecting the notes."""
 
@@ -271,6 +274,7 @@ class _Cells:
         self.cell_class = WriteOnlyCell
         self.illegal = ILLEGAL_CHARACTERS_RE
         self.bold = Font(bold=True)
+        self.kinds: dict[str, int] = dict.fromkeys(_KINDS, 0)
 
     def text(self, text: str, path: str, *, bold: bool = False) -> Any:
         if self.illegal.search(text):
@@ -288,6 +292,20 @@ class _Cells:
         return cell
 
     def value(self, value: Any, path: str) -> Any:
+        """A data cell, counted by how it is stored."""
+        written = self._value(value, path)
+        if written is None:
+            kind = "empty"
+        elif isinstance(written, bool):
+            kind = "true/false"
+        elif isinstance(written, (int, float)):
+            kind = "number"
+        else:
+            kind = "text"
+        self.kinds[kind] += 1
+        return written
+
+    def _value(self, value: Any, path: str) -> Any:
         if value is None or isinstance(value, (bool, float)):
             return value
         if isinstance(value, int):
@@ -312,9 +330,11 @@ def write_xlsx(value: Any, options: Any, notes: Notes) -> tuple[bytes, str]:
     workbook = Workbook(write_only=True)
     taken: set[str] = set()
     total = 0
+    kinds: dict[str, int] = dict.fromkeys(_KINDS, 0)
     for name, rows, prefix in sheets:
         sheet = workbook.create_sheet(title=_sheet_name(name, taken))
         cells = _Cells(sheet, notes)
+        cells.kinds = kinds  # one count for the whole workbook
         if rows and all(isinstance(row, list) for row in rows):
             if len(rows) > MAX_ROWS:
                 raise ConvertError(f"a sheet has more rows than Excel allows ({MAX_ROWS:,})")
@@ -341,4 +361,8 @@ def write_xlsx(value: Any, options: Any, notes: Notes) -> tuple[bytes, str]:
         total += len(flat)
     stream = io.BytesIO()
     workbook.save(stream)
-    return stream.getvalue(), f"{count_text(len(sheets), 'sheet')}, {count_text(total, 'row')}"
+    summary = f"{count_text(len(sheets), 'sheet')}, {count_text(total, 'row')}"
+    stored = [count_text(kinds[kind], f"{kind} cell") for kind in _KINDS if kinds[kind]]
+    if stored:
+        summary += "; " + ", ".join(stored)
+    return stream.getvalue(), summary

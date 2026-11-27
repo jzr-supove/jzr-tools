@@ -404,7 +404,8 @@ class CommandTests(TrimCase):
         self.assertEqual(result.exit_code, 0, describe(result))
         lines = result.stdout.splitlines()
         self.assertIn(
-            f"{clip} -> {self.dir / 'clip_trim.mp4'} (video encoded to h264, audio copied)", lines
+            # The stand-in ffmpeg writes the seven bytes of "trimmed".
+            f"{clip} -> {self.dir / 'clip_trim.mp4'} (video encoded to h264, audio copied, 7 B)", lines
         )
         self.assertIn("ffmpeg: 1 converted", lines)
         self.assertEqual(err(result), "")
@@ -521,14 +522,15 @@ class FastTests(TrimCase):
         (line,) = [l for l in result.stdout.splitlines() if l.startswith(str(clip))]
         self.assertTrue(line.startswith(f"{clip} -> {self.dir / 'clip_trim.mp4'} (video copied, audio copied"))
         self.assertIn("starts at 0:04.000, the keyframe before 0:05.000", line)
-        self.assertTrue(line.endswith(")"))
+        # The size is the last item, after the note about the keyframe.
+        self.assertTrue(line.endswith(", 7 B)"), line)
 
     def test_a_start_on_a_keyframe_adds_no_such_note(self) -> None:
         (clip,) = self.touch("clip.mp4")
         result = self.invoke_fast(clip, 5.0, "--start", "5", "--end", "8")
         self.assertEqual(result.exit_code, 0, describe(result))
         self.assertNotIn("starts at", result.stdout)
-        self.assertIn(f"{clip} -> {self.dir / 'clip_trim.mp4'} (video copied, audio copied)", result.stdout)
+        self.assertIn(f"{clip} -> {self.dir / 'clip_trim.mp4'} (video copied, audio copied, 7 B)", result.stdout)
 
     def test_an_unknown_keyframe_adds_no_such_note(self) -> None:
         (clip,) = self.touch("clip.mp4")
@@ -584,7 +586,7 @@ class AudioTrimTests(TrimCase):
         # the length grows by the same and the end stays at 6.
         self.assertEqual(value_after(before_input(call), "-ss"), "1.973878")
         self.assertEqual(value_after(plan, "-t"), "4.026122")
-        self.assertIn(f"{song} -> {self.dir / 'song_trim.mp3'} (audio copied)", result.stdout)
+        self.assertIn(f"{song} -> {self.dir / 'song_trim.mp3'} (audio copied, 7 B)", result.stdout)
 
     def test_exact_encodes_a_lossy_file_again(self) -> None:
         (song,) = self.touch("song.mp3")

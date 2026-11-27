@@ -133,7 +133,7 @@ def plan_order(
         if angle is None or (colon and not where.strip()):
             raise ValueError(ROTATE_USAGE)
         if colon:
-            if not re.search(r"\d", where):
+            if not re.search(r"\d|\blast\b", where):
                 raise ValueError(ROTATE_USAGE)
             targets = _pages_of("--rotate", where, count, backwards=True)
         else:

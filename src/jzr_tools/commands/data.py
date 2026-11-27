@@ -349,8 +349,10 @@ def convert_command(
         stream.write(result.data)
         stream.flush()
     else:
-        summary = f" ({result.summary})" if result.summary else ""
-        click.echo(f"wrote {destination}{summary}", err=True)
+        from jzr_tools.core.media import with_written_size
+
+        summary = with_written_size(result.summary or "", destination)
+        click.echo(f"wrote {destination}{f' ({summary})' if summary else ''}", err=True)
     for note in result.notes:
         click.echo(f"note: {note}", err=True)
 

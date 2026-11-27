@@ -122,7 +122,10 @@ def report(result: ConversionResult) -> None:
         if result.detail:
             click.echo(f"note: {result.detail}", err=True)
     elif result.status in _DONE:
-        note = f" ({result.detail})" if result.detail else ""
+        from jzr_tools.core.media import with_written_size
+
+        detail = with_written_size(result.detail or "", result.target)
+        note = f" ({detail})" if detail else ""
         click.echo(f"{result.source} -> {result.target}{note}")
     elif result.status == "skipped":
         click.echo(f"skip {result.source}: {result.detail}", err=True)

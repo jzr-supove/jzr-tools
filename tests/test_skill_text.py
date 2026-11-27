@@ -82,6 +82,51 @@ def _stem(names: tuple[str, ...]) -> str:
     return names[0] if len(names) > 1 else "tools"
 
 
+# The Rules section of SKILL.md explains these for every batch command, so the list leaves them out.
+SHARED_OPTIONS = frozenset(
+    {"--dir", "--pattern", "--recursive", "--output", "--outdir", "--overwrite", "--dry-run", "--help"}
+)
+# Click's own words for numbers; the list shortens each of them to N.
+NUMERIC_METAVARS = frozenset({"INTEGER", "INTEGER RANGE", "FLOAT", "FLOAT RANGE"})
+# What may stand between the short help and the arguments, and between two of them.
+SEPARATORS = r"[\s.,;:|\u00b7-]*"
+
+
+def _own_items(command: click.Command, ctx: click.Context) -> list[str]:
+    """What the list shows after the short help: the arguments, then the options as `-h` lists them.
+
+    Worked out from Click's own help records, so it does not use the code under test.
+    """
+    arguments: list[str] = []
+    options: list[str] = []
+    for param in command.get_params(ctx):
+        if isinstance(param, click.Argument):
+            arguments.append(param.make_metavar(ctx))
+            continue
+        assert isinstance(param, click.Option)
+        record = param.get_help_record(ctx)
+        if param.hidden or record is None:
+            continue
+        longest = max((n for n in (*param.opts, *param.secondary_opts) if n.startswith("--")), key=len)
+        if longest in SHARED_OPTIONS:
+            continue
+        # The record reads "-s, --size SIZE": the metavar follows the last name.
+        _name, _, metavar = record[0].split(", ")[-1].partition(" ")
+        metavar = "N" if metavar in NUMERIC_METAVARS else metavar
+        options.append(f"{longest} {metavar}" if metavar else longest)
+    return [*arguments, *options]
+
+
+def _expected_lines() -> dict[str, list[tuple[str, str, list[str]]]]:
+    """For each reference stem: (path, "- `jzr path` - short help", own items) in CLI order."""
+    by_stem: dict[str, list[tuple[str, str, list[str]]]] = {}
+    for names, command, ctx in _walk():
+        path = " ".join(names)
+        head = f"- `jzr {path}` - {command.get_short_help_str(limit=300)}"
+        by_stem.setdefault(_stem(names), []).append((path, head, _own_items(command, ctx)))
+    return by_stem
+
+
 def _help_variants(ctx_names: tuple[str, ...]) -> set[str]:
     """`jzr <path> -h` at width 88 without the -h line, with and without an emptied Options heading."""
     ctx = _context(app, "jzr", None)
@@ -262,20 +307,264 @@ class CommandMapTests(SkillTextCase):
                 (line,) = [line for line in lines if line.startswith(f"- `jzr {path}` ")]
                 self.assertIn("target size", line)
 
-    def test_each_command_has_one_line_with_its_short_help_under_its_own_heading(self) -> None:
-        by_stem: dict[str, list[str]] = {}
-        for names, command, _ctx in _walk():
-            help_line = command.get_short_help_str(limit=300)
-            by_stem.setdefault(_stem(names), []).append(f"- `jzr {' '.join(names)}` - {help_line}")
+    def test_each_command_has_one_line_with_its_short_help_and_its_own_options_under_its_own_heading(
+        self,
+    ) -> None:
+        actual = {heading.split()[1]: lines for heading, lines in self._parse()}
+        expected = _expected_lines()
 
-        actual = {
-            heading.split()[1]: lines for heading, lines in self._parse()
+        self.assertEqual(list(actual), list(expected))
+        shown = 0
+        for stem, wanted in expected.items():
+            self.assertEqual(len(actual[stem]), len(wanted), stem)
+            for line, (path, head, items) in zip(actual[stem], wanted):
+                with self.subTest(path=path):
+                    self.assertTrue(line.startswith(head), f"{line!r} does not start with {head!r}")
+                    rest = line[len(head):]
+                    found = re.findall(r"`([^`]+)`", rest)
+                    self.assertEqual(found, items)
+                    self.assertRegex(re.sub(r"`[^`]+`", "", rest), f"^{SEPARATORS}$")
+                    shown += len(found)
+        # Without this the loop could pass over a list that shows nothing at all.
+        self.assertGreater(shown, 150)
+
+    def test_the_options_of_some_commands_are_pinned_to_the_agreed_shape(self) -> None:
+        lines = {
+            line.split("`")[1].removeprefix("jzr "): line
+            for line in _text().command_map().splitlines()
+            if line.startswith("- `jzr ")
         }
+        pinned = {
+            # From the spec: arguments first, then the options in the order `-h` lists them.
+            "video gif": ["[SOURCES]...", "--start TIME", "--end TIME", "--duration TIME", "--width N", "--fps N"],
+            # Choices stay, the batch options are left out, numbers become N.
+            "image compress": [
+                "[SOURCES]...", "--to [jpg|png|webp|avif|heic]", "--quality N", "--size SIZE",
+                "--max-side N", "--strip", "--background COLOR",
+            ],
+            "uuid": ["--count N", "--v7", "--upper", "--no-hyphens", "--copy"],
+            "text slug": ["[TEXT]", "--separator TEXT", "--preserve-case", "--include-date", "--copy"],
+            "random int": ["[MIN MAX]", "--count N", "--unique"],
+            "audio tags": [
+                "FILES...", "--json", "--set KEY=VALUE", "--unset KEY", "--clear", "--cover IMAGE",
+                "--no-cover", "--lyrics FILE", "--export-cover FILE",
+            ],
+            "pdf split": ["FILE", "--every N", "--pages GROUPS"],
+            "data convert": [
+                "[FILE]", "--from [json|jsonl|yaml|csv|toml|xlsx]", "--to [json|jsonl|yaml|csv|toml|xlsx]",
+                "--delimiter [,|;|tab||]", "--no-header", "--header-row N", "--types", "--nest",
+                "--sheet NAME", "--indent N", "--minify",
+            ],
+        }
+        for path, items in pinned.items():
+            with self.subTest(path=path):
+                # The first backticked word is the command itself; none of these short helps has one.
+                self.assertEqual(re.findall(r"`([^`]+)`", lines[path])[1:], items)
 
-        self.assertEqual(actual, by_stem)
+    def test_a_command_with_nothing_of_its_own_to_list_keeps_the_plain_line(self) -> None:
+        lines = _text().command_map().splitlines()
+        for line in (
+            "- `jzr image formats` - Show supported extensions and the conversion engines available.",
+            "- `jzr bind path` - Print where the bindings are stored.",
+            "- `jzr completion bash` - Print the bash completion script.",
+            "- `jzr ffmpeg status` - Show which ffmpeg and ffprobe jzr uses and where they come from.",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(line, lines)
+
+    def test_the_shared_batch_options_and_help_are_never_listed(self) -> None:
+        listed = [
+            item
+            for line in _text().command_map().splitlines()
+            if line.startswith("- `jzr ")
+            for item in re.findall(r"`([^`]+)`", line)[1:]
+        ]
+        self.assertGreater(len(listed), 150)
+        for item in listed:
+            with self.subTest(item=item):
+                self.assertNotIn(item.split()[0], SHARED_OPTIONS)
+                self.assertNotIn(item.split()[0], {"-h"})
+
+    def test_numeric_click_types_are_written_as_n_and_choices_are_kept(self) -> None:
+        listed = [
+            item
+            for line in _text().command_map().splitlines()
+            if line.startswith("- `jzr ")
+            for item in re.findall(r"`([^`]+)`", line)[1:]
+        ]
+        for item in listed:
+            with self.subTest(item=item):
+                self.assertNotRegex(item, r"\b(INTEGER|FLOAT)\b")
+        self.assertIn("--quality N", listed)
+        self.assertIn("--count N", listed)
+        self.assertIn("--fps N", listed)
+        self.assertIn("--quality [high|balanced|small]", listed)
+
+    def test_an_option_shows_its_longest_name_and_no_metavar_when_it_is_a_flag(self) -> None:
+        line = next(
+            text for text in _text().command_map().splitlines() if text.startswith("- `jzr text slug`")
+        )
+
+        self.assertIn("`--include-date`", line)
+        self.assertNotIn("--date", line.replace("--include-date", ""))
+        self.assertNotRegex(line, r"-s\b")
+        self.assertIn("`--preserve-case`", line)
+
+    def test_each_command_stays_on_one_line_and_the_headings_are_unchanged(self) -> None:
+        lines = _text().command_map().splitlines()
+        commands = [line for line in lines if not line.startswith("### ")]
+
+        self.assertEqual(len(commands), len(_text().entries()))
+        for line in commands:
+            self.assertTrue(line.startswith("- `jzr "), line)
 
     def test_the_text_has_no_carriage_return(self) -> None:
         self.assertNotIn("\r", _text().command_map())
+
+
+class IntroTests(SkillTextCase):
+    """The sentence above the command list, as `build()` makes it (not as it was last committed)."""
+
+    def _intro(self) -> str:
+        text = _text().build()["SKILL.md"]
+        heading = text.index("## Commands")
+        return text[heading + len("## Commands"):text.index("<!-- commands:start -->")].strip()
+
+    def test_it_no_longer_says_the_list_shows_no_options(self) -> None:
+        intro = self._intro()
+
+        self.assertTrue(intro)
+        self.assertNotIn("shows no options", intro)
+
+    def test_it_does_not_tell_agents_to_run_help_before_using_a_command(self) -> None:
+        self.assertNotIn("Before using", self._intro())
+
+    def test_it_says_each_line_shows_the_options_and_the_shared_ones_are_under_rules(self) -> None:
+        intro = self._intro()
+
+        self.assertRegex(intro, r"(?i)\beach line\b.*\boptions\b")
+        self.assertRegex(intro, r"(?i)\bshared\b")
+        self.assertIn("Rules", intro)
+
+    def test_it_still_names_the_help_command_and_the_reference_files(self) -> None:
+        intro = self._intro()
+
+        self.assertIn("`jzr <group> <command> -h`", intro)
+        self.assertIn("reference file", intro)
+        self.assertIn("worked examples", intro)
+
+    def test_it_has_a_rules_section_that_covers_the_shared_options_it_points_to(self) -> None:
+        text = _text().build()["SKILL.md"]
+        rules = text[text.index("## Rules"):]
+
+        for option in ("--overwrite", "--dry-run", "--outdir", "-o FILE", "--dir", "`-r`", "-p REGEX"):
+            with self.subTest(option=option):
+                self.assertIn(option, rules)
+
+    def test_the_built_skill_stays_under_150_lines_with_the_options_listed(self) -> None:
+        built = _text().build()["SKILL.md"]
+
+        self.assertLess(len(built.splitlines()), 150)
+        # One line for each command: the list did not grow by wrapping.
+        block = built[built.index("<!-- commands:start -->"):built.index("<!-- commands:end -->")]
+        self.assertEqual(
+            len([line for line in block.splitlines() if line.startswith("- `jzr ")]),
+            len(_text().entries()),
+        )
+
+
+class ScanRuleTests(SkillTextCase):
+    """The Rules line about running without SOURCES, as `build()` makes it."""
+
+    def _rules(self) -> str:
+        text = _text().build()["SKILL.md"]
+        return text[text.index("## Rules"):]
+
+    def _scan_rule(self) -> str:
+        """The Rules bullet that explains `--dir`."""
+        bullets = [line for line in self._rules().splitlines() if line.startswith("- ") and "--dir" in line]
+        self.assertEqual(len(bullets), 1, bullets)
+        return bullets[0]
+
+    def test_it_no_longer_tells_agents_to_dry_run_every_scan_first(self) -> None:
+        text = _text().build()["SKILL.md"]
+
+        self.assertNotIn("Run such a scan with `--dry-run` first", text)
+        self.assertNotRegex(text, r"(?i)scan with `--dry-run` first")
+
+    def test_it_keeps_the_facts_about_the_folder_scan(self) -> None:
+        rule = self._scan_rule()
+
+        self.assertRegex(rule, r"(?i)\b(no|without)\s+SOURCES\b")
+        self.assertIn("every matching file in `--dir`", rule)
+        self.assertIn("current folder", rule)
+        self.assertIn("`-r`", rule)
+        self.assertIn("subfolders", rule)
+        self.assertIn("-p REGEX", rule)
+
+    def _sentences(self) -> list[str]:
+        return re.split(r"(?<=[.;])\s+", self._scan_rule())
+
+    def test_it_says_files_named_as_sources_need_no_dry_run(self) -> None:
+        no_dry_run = (
+            r"(?i)\bno\s+`?(?:--)?dry[- ]run"
+            r"|dry[- ]run`?\s+(?:is\s+)?(?:not needed|not necessary|unnecessary|optional)"
+            r"|\b(?:not|n't)\s+(?:need|needed|necessary)\b[^.]*dry[- ]run"
+            r"|without a\s+`?(?:--)?dry[- ]run"
+        )
+        named = r"(?i)\b(named|given|listed|SOURCES?|files?|paths?|arguments?)\b"
+        found = [s for s in self._sentences() if re.search(no_dry_run, s)]
+
+        self.assertTrue(found, f"no sentence says a dry run is not needed: {self._scan_rule()!r}")
+        self.assertTrue([s for s in found if re.search(named, s)], found)
+
+    def test_it_keeps_dry_run_for_previewing_a_scan_that_may_catch_unwanted_files(self) -> None:
+        for sentence in self._sentences():
+            if (
+                "--dry-run" in sentence
+                and re.search(r"(?i)\b(scan|preview\w*|folder)\b|--dir", sentence)
+                and re.search(r"(?i)\b(may|might|if|when|unsure|unless)\b", sentence)
+            ):
+                return
+        self.fail(f"no sentence offers --dry-run for a scan that may catch unwanted files: {self._scan_rule()!r}")
+
+    def test_the_skill_stays_under_150_lines(self) -> None:
+        self.assertLess(len(_text().build()["SKILL.md"].splitlines()), 150)
+
+
+class PageListRuleTests(SkillTextCase):
+    """A Rules line explains PAGES, so agents need neither `-h` nor a page count first."""
+
+    def _rule(self) -> str:
+        text = _text().build()["SKILL.md"]
+        rules = text[text.index("## Rules"):text.index("## Leave these to the user")]
+        bullets = [line for line in rules.splitlines() if line.startswith("- ") and "PAGES" in line]
+        self.assertEqual(len(bullets), 1, bullets)
+        return bullets[0]
+
+    def test_it_shows_numbers_ranges_and_open_ranges(self) -> None:
+        rule = self._rule()
+        self.assertIn("`1-3,5`", rule)
+        self.assertRegex(rule, r"`\d+-`")
+
+    def test_it_explains_last(self) -> None:
+        rule = self._rule()
+        self.assertRegex(rule, r"`\d+-last`")
+        self.assertRegex(rule, r"`last` is the last page")
+
+    def test_it_says_how_split_groups_are_separated(self) -> None:
+        self.assertRegex(self._rule(), r"`;`")
+
+    def test_every_page_example_in_it_parses(self) -> None:
+        from jzr_tools.core.pdfdoc import parse_pages
+
+        examples = re.findall(r"`([0-9last,;-]+)`", self._rule())
+        self.assertTrue(examples)
+        for example in examples:
+            if example == ";":
+                continue
+            with self.subTest(example=example):
+                parse_pages(example, 12, groups=True)
 
 
 def _sections(text: str) -> list[tuple[str, str]]:
@@ -553,7 +842,7 @@ class SkillMdTests(unittest.TestCase):
                 self.assertIn(command, section)
 
     def test_it_points_at_the_help_of_each_command(self) -> None:
-        self.assertRegex(self.text, r"jzr <group> <command> -h|jzr .* -h")
+        self.assertIn("`jzr <group> <command> -h`", self.text)
 
 
 class ExamplesTests(SkillTextCase):

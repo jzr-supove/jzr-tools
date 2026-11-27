@@ -14,6 +14,7 @@ from click.testing import CliRunner
 
 from jzr_tools.cli import app
 from tests import dataconv_fixtures as fx
+from tests.size_fixtures import size_text
 
 CSV_TEXT_NOTE = (
     "note: CSV cells were kept as text; --types reads numbers, true/false and empty cells"
@@ -215,15 +216,20 @@ class OutputFileTests(ConvertCliCase):
         result = self.convert("a.json", "-o", "out.yaml")
         self.assert_exit(result, 0)
         self.assertEqual(result.stdout_bytes, b"")
-        self.assertEqual(self.stderr_lines(result), ["wrote out.yaml"])
+        # The file is the 14 bytes below, and the line ends with their size.
+        self.assertEqual(self.stderr_lines(result), ["wrote out.yaml (14 B)"])
         self.assertEqual((self.folder / "out.yaml").read_bytes(), b"- a: 1\n  b: x\n")
 
     def test_the_wrote_line_carries_a_summary_where_there_is_one(self) -> None:
         result = self.convert("a.json", "-o", "out.csv")
         self.assertEqual(len(self.stderr_lines(result)), 1)
-        self.assertRegex(self.stderr_lines(result)[0], r"^wrote out\.csv \(1 rows?\)$")
+        self.assertEqual(
+            self.stderr_lines(result), [f"wrote out.csv (1 row, {size_text('out.csv')})"]
+        )
         result = self.convert("--from", "json", "--to", "jsonl", "-o", "lines.jsonl", input="[1, 2, 3]")
-        self.assertEqual(self.stderr_lines(result), ["wrote lines.jsonl (3 lines)"])
+        self.assertEqual(
+            self.stderr_lines(result), [f"wrote lines.jsonl (3 lines, {size_text('lines.jsonl')})"]
+        )
 
     def test_the_output_may_be_in_another_folder(self) -> None:
         (self.folder / "sub").mkdir()
@@ -282,7 +288,9 @@ class NotesTests(ConvertCliCase):
     def test_notes_follow_the_wrote_line(self) -> None:
         self.write("a.csv", "a,b\n1,2\n")
         result = self.convert("a.csv", "-o", "out.json")
-        self.assertEqual(self.stderr_lines(result), ["wrote out.json", CSV_TEXT_NOTE])
+        self.assertEqual(
+            self.stderr_lines(result), [f"wrote out.json ({size_text('out.json')})", CSV_TEXT_NOTE]
+        )
 
     def test_every_note_is_on_its_own_line(self) -> None:
         self.write("a.yaml", "1: a\n1.5: b\n")
@@ -322,7 +330,10 @@ class XlsxCliTests(ConvertCliCase):
         result = self.convert("data.json", "--to", "xlsx")
         self.assert_exit(result, 0)
         self.assertEqual(result.stdout_bytes, b"")
-        self.assertEqual(self.stderr_lines(result), ["wrote data.xlsx (1 sheet, 2 rows)"])
+        self.assertEqual(
+            self.stderr_lines(result),
+            [f"wrote data.xlsx (1 sheet, 2 rows; 2 number cells, {size_text('data.xlsx')})"],
+        )
         from openpyxl import load_workbook
 
         ws = load_workbook(self.folder / "data.xlsx").active
@@ -340,7 +351,10 @@ class XlsxCliTests(ConvertCliCase):
         self.assert_exit(result, 0)
         self.assertTrue((self.folder / "book.xlsx").is_file())
         self.assertFalse((self.folder / "data.xlsx").exists())
-        self.assertEqual(self.stderr_lines(result), ["wrote book.xlsx (1 sheet, 2 rows)"])
+        self.assertEqual(
+            self.stderr_lines(result),
+            [f"wrote book.xlsx (1 sheet, 2 rows; 2 number cells, {size_text('book.xlsx')})"],
+        )
 
     def test_the_workbook_is_a_zip_file(self) -> None:
         self.convert("data.json", "--to", "xlsx")
@@ -364,7 +378,10 @@ class XlsxCliTests(ConvertCliCase):
     def test_xlsx_from_stdin_with_o_works(self) -> None:
         result = self.convert("--from", "json", "-o", "out.xlsx", input='[{"a": 1}]')
         self.assert_exit(result, 0)
-        self.assertRegex(self.stderr_lines(result)[0], r"^wrote out\.xlsx \(1 sheet, 1 rows?\)$")
+        self.assertEqual(
+            self.stderr_lines(result),
+            [f"wrote out.xlsx (1 sheet, 1 row; 1 number cell, {size_text('out.xlsx')})"],
+        )
 
     def test_the_default_workbook_name_may_not_be_the_input(self) -> None:
         book = self.write("book.xlsx", fx.simple_workbook())

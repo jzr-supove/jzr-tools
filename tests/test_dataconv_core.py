@@ -1051,13 +1051,13 @@ class XlsxWriteTests(unittest.TestCase):
         self.assertEqual(result.notes, (FORMULA_NOTE,))
 
     def test_the_summary_counts_sheets_and_rows_with_thousands_separators(self) -> None:
-        self.assertEqual(run("json", "xlsx", '[{"a": 1}, {"a": 2}]').summary, "1 sheet, 2 rows")
+        self.assertEqual(run("json", "xlsx", '[{"a": 1}, {"a": 2}]').summary, "1 sheet, 2 rows; 2 number cells")
         self.assertEqual(
             run("json", "xlsx", '{"x": [{"a": 1}], "y": [{"a": 1}, {"a": 2}]}').summary,
-            "2 sheets, 3 rows",
+            "2 sheets, 3 rows; 3 number cells",
         )
         many = json.dumps([{"a": i} for i in range(1204)])
-        self.assertEqual(run("json", "xlsx", many).summary, "1 sheet, 1,204 rows")
+        self.assertEqual(run("json", "xlsx", many).summary, "1 sheet, 1,204 rows; 1,204 number cells")
 
     def test_a_workbook_written_here_reads_back_through_the_reader(self) -> None:
         original = [{"id": 1, "user": {"name": "Ann"}, "ok": True, "score": 1.5}]

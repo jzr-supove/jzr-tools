@@ -294,7 +294,10 @@ class CommandTests(GifCase):
             value_after(plan_of(call), "-filter_complex"),
             graph("fps=15", "scale=480:270:flags=lanczos"),
         )
-        self.assertEqual(self.result_line(result, clip), f"{clip} -> {self.dir / 'clip.gif'} (480x270, 15 fps)")
+        # The stand-in ffmpeg writes the seven bytes of "trimmed", so every result line ends in "7 B".
+        self.assertEqual(
+            self.result_line(result, clip), f"{clip} -> {self.dir / 'clip.gif'} (480x270, 15 fps, 7 B)"
+        )
 
     def test_a_narrower_picture_is_never_scaled_up(self) -> None:
         (clip,) = self.touch("clip.mp4")
@@ -302,7 +305,7 @@ class CommandTests(GifCase):
         self.assertEqual(result.exit_code, 0, describe(result))
         (call,) = self.ffmpeg_calls()
         self.assertNotIn("flags=lanczos", value_after(plan_of(call), "-filter_complex"))
-        self.assertIn("(64x48, 15 fps)", result.stdout)
+        self.assertIn("(64x48, 15 fps, 7 B)", result.stdout)
 
     def test_width_reaches_the_filter_graph(self) -> None:
         (clip,) = self.touch("clip.mp4")
@@ -313,7 +316,7 @@ class CommandTests(GifCase):
             value_after(plan_of(call), "-filter_complex"),
             graph("fps=15", "scale=32:24:flags=lanczos"),
         )
-        self.assertIn("(32x24, 15 fps)", result.stdout)
+        self.assertIn("(32x24, 15 fps, 7 B)", result.stdout)
 
     def test_fps_below_the_source_rate_reaches_the_filter_graph(self) -> None:
         (clip,) = self.touch("clip.mp4")
@@ -325,7 +328,7 @@ class CommandTests(GifCase):
                 self.assertEqual(
                     value_after(plan_of(call), "-filter_complex"), graph(f"fps={written}")
                 )
-                self.assertIn(f"{written} fps)", result.stdout)
+                self.assertIn(f"{written} fps, 7 B)", result.stdout)
 
     def test_a_frame_rate_above_the_source_rate_keeps_the_source_rate(self) -> None:
         (clip,) = self.touch("clip.mp4")
@@ -333,7 +336,7 @@ class CommandTests(GifCase):
         self.assertEqual(result.exit_code, 0, describe(result))
         (call,) = self.ffmpeg_calls()
         self.assertEqual(value_after(plan_of(call), "-filter_complex"), graph())
-        self.assertIn("(64x48, 20 fps)", result.stdout)
+        self.assertIn("(64x48, 20 fps, 7 B)", result.stdout)
 
     def test_width_and_fps_work_together(self) -> None:
         (clip,) = self.touch("clip.mp4")
@@ -400,7 +403,7 @@ class CommandTests(GifCase):
         result = self.gif(clip)
         self.assertEqual(result.exit_code, 0, describe(result))
         lines = result.stdout.splitlines()
-        self.assertIn(f"{clip} -> {self.dir / 'clip.gif'} (64x48, 15 fps)", lines)
+        self.assertIn(f"{clip} -> {self.dir / 'clip.gif'} (64x48, 15 fps, 7 B)", lines)
         self.assertIn("ffmpeg: 1 converted", lines)
         self.assertEqual(err(result), "")
         self.assertEqual(self.names(), {"clip.mp4", "clip.gif"})
@@ -412,7 +415,7 @@ class CommandTests(GifCase):
         self.assertEqual(result.exit_code, 0, describe(result))
         self.assertIn(
             f"{clip} -> {self.dir / 'clip.gif'} (480x270, 15 fps; "
-            f"long GIF (1:00): expect tens to hundreds of MB; {LONG_TAIL})",
+            f"long GIF (1:00): expect tens to hundreds of MB; {LONG_TAIL}, 7 B)",
             result.stdout,
         )
 
@@ -656,7 +659,7 @@ class ConvertToGifTests(GifCase):
         result = self.convert(clip, "--to", "gif")
         self.assertEqual(result.exit_code, 0, describe(result))
         lines = result.stdout.splitlines()
-        self.assertIn(f"{clip} -> {self.dir / 'clip.gif'} (64x48, 15 fps)", lines)
+        self.assertIn(f"{clip} -> {self.dir / 'clip.gif'} (64x48, 15 fps, 7 B)", lines)
         self.assertIn("ffmpeg: 1 converted", lines)
 
     def test_a_large_source_is_scaled_to_480_wide(self) -> None:
@@ -664,7 +667,7 @@ class ConvertToGifTests(GifCase):
         (clip,) = self.touch("clip.mp4")
         result = self.convert(clip, "--to", "gif")
         self.assertEqual(result.exit_code, 0, describe(result))
-        self.assertIn(f"{clip} -> {self.dir / 'clip.gif'} (480x270, 15 fps)", result.stdout)
+        self.assertIn(f"{clip} -> {self.dir / 'clip.gif'} (480x270, 15 fps, 7 B)", result.stdout)
 
     def test_the_target_is_taken_from_the_output_extension(self) -> None:
         (clip,) = self.touch("clip.mp4")

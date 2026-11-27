@@ -18,6 +18,7 @@ from click.testing import CliRunner
 from jzr_tools.cli import app
 
 from media_fixtures import HAVE_FFMPEG, Clips, ffmpeg_run
+from size_fixtures import with_size
 from test_media_cli import describe, err
 from test_video_convert_real import encoders
 
@@ -158,7 +159,7 @@ class RealAudioConvertTests(unittest.TestCase):
         (m4a,) = self.stage("song.m4a")
         out = self.work / "out"
         result = self.ok(m4a, "--to", "m4a", "--outdir", out)
-        self.assertIn("(audio copied)", result.stdout)
+        self.assertIn(with_size(f"{m4a} -> {out / 'song.m4a'} (audio copied)", out / "song.m4a"), result.stdout)
         self.assertEqual(audio_stream(out / "song.m4a")["codec_name"], "aac")
 
     def test_opus_to_mp3_keeps_title_and_artist(self) -> None:

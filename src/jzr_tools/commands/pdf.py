@@ -29,6 +29,7 @@ from jzr_tools.commands._batch import (
     report,
     summarize,
 )
+from jzr_tools.core.media import with_written_size
 
 if TYPE_CHECKING:
     from jzr_tools.core.pdfdoc import Checked
@@ -232,7 +233,7 @@ def merge(files: tuple[Path, ...], output: Path | None, overwrite: bool, dry_run
     "groups_text",
     metavar="GROUPS",
     default=None,
-    help='Groups of pages, such as "1-3;4,6;7-" (one file per group).',
+    help='Groups of pages, such as "1-3;4,6;7-" or "1;2-last" (one file per group).',
 )
 @click.option(
     "--outdir",
@@ -314,7 +315,8 @@ def split(
             return
 
     for target, group in zip(targets, groups):
-        click.echo(f"{file} -> {target} ({_pages_text(group)})")
+        pages = _pages_text(group)
+        click.echo(f"{file} -> {target} ({pages if dry_run else with_written_size(pages, target)})")
     written = {page for group in groups for page in group}
     left_out = [page for page in range(1, count + 1) if page not in written]
     if left_out:
@@ -328,14 +330,14 @@ def split(
     "--order",
     metavar="PAGES",
     default=None,
-    help="Pages in their new order, such as 3,1,2 or 12-1; pages not listed are dropped.",
+    help="Pages in their new order, such as 3,1,2 or 12-1 or last-1; pages not listed are dropped.",
 )
-@click.option("--delete", metavar="PAGES", default=None, help="Pages to remove, such as 2,5-7.")
+@click.option("--delete", metavar="PAGES", default=None, help="Pages to remove, such as 2,5-7 or last.")
 @click.option(
     "--rotate",
     metavar="[PAGES:]ANGLE",
     multiple=True,
-    help="Turn pages clockwise: 90, 180 or 270, or PAGES:ANGLE such as 2-4:90. Repeatable.",
+    help="Turn pages clockwise: 90, 180 or 270, or PAGES:ANGLE such as 2-4:90 or last:90. Repeatable.",
 )
 @_output_option("Write the result to this file.  [default: <name>_organized.pdf]")
 @_overwrite_option
@@ -403,7 +405,7 @@ def organize(
             reason = error.strerror if isinstance(error, OSError) and error.strerror else error
             _fail_build(file, reason)
             return
-    click.echo(f"{file} -> {target} ({details})")
+    click.echo(f"{file} -> {target} ({details if dry_run else with_written_size(details, target)})")
     summarize("pdf", Counter({"planned" if dry_run else "organized": 1}))
 
 
@@ -505,7 +507,7 @@ def compress(
     default=None,
     help="JPEG quality, 1-100 (default 90).",
 )
-@click.option("--pages", "pages_text", metavar="PAGES", help="Only these pages, such as 1-3,5.")
+@click.option("--pages", "pages_text", metavar="PAGES", help="Only these pages, such as 1-3,5 or 2-last.")
 @click.option(
     "--outdir",
     type=click.Path(file_okay=False, path_type=Path),
@@ -716,7 +718,7 @@ FONT_NOTE = "some font information could not be read; check bold text"
 @app.command()
 @click.argument("file", type=_EXISTING_FILE)
 @click.option("--markdown", is_flag=True, help="Convert to Markdown instead of plain text.")
-@click.option("--pages", "pages_text", metavar="PAGES", help="Only these pages, such as 1-3,5.")
+@click.option("--pages", "pages_text", metavar="PAGES", help="Only these pages, such as 1-3,5 or 2-last.")
 @click.option("--page-breaks", is_flag=True, help="With --markdown, put --- between pages.")
 @_output_option("Write to this file instead of printing.")
 @click.option("--overwrite", is_flag=True, help="Replace the output file if it exists.")

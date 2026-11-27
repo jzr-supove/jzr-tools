@@ -24,7 +24,8 @@ runner = CliRunner()
 DAMAGED = "damaged or not a PDF"
 ENCRYPTED = "encrypted PDFs are not supported; use an unencrypted copy"
 A4 = (595.276, 841.89)
-PAGES_USAGE = "--pages: use page numbers and ranges such as 1-3,5 (pages 1 to 3)"
+PAGES_USAGE = "--pages: use page numbers and ranges such as 1-3,5"
+PAGES_COUNT = "(pages 1 to 3)"
 
 
 def images(*args: str):  # noqa: ANN201
@@ -240,7 +241,47 @@ class PageSelectionTests(CliCase):
         self.put("a.pdf", fx.marked(3))
         for text in ("0", "4", "2-1", "1,1", "x", ""):
             with self.subTest(pages=text):
-                self.assertUsageError(images("a.pdf", "--pages", text), PAGES_USAGE)
+                result = images("a.pdf", "--pages", text)
+                self.assertUsageError(result, PAGES_USAGE)
+                self.assertUsageError(result, PAGES_COUNT)
+        self.assertEqual(self.tree(), ["a.pdf"])
+
+    def test_last_is_the_last_page(self) -> None:
+        self.put("a.pdf", fx.marked(4))
+        result = images("a.pdf", "--pages", "last", "--dpi", "72")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(
+            result.stdout.splitlines(), ["a.pdf -> a_page-004.jpg (140x200)", "pdf: 1 written"]
+        )
+        self.assertEqual(self.tree(), ["a.pdf", "a_page-004.jpg"])
+
+    def test_a_range_can_end_at_last(self) -> None:
+        self.put("a.pdf", fx.marked(4))
+        result = images("a.pdf", "--pages", "3-last,1", "--dpi", "72")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(
+            result_lines(result),
+            [
+                "a.pdf -> a_page-001.jpg (110x200)",
+                "a.pdf -> a_page-003.jpg (130x200)",
+                "a.pdf -> a_page-004.jpg (140x200)",
+            ],
+        )
+
+    def test_last_on_a_one_page_file_is_page_one(self) -> None:
+        self.put("a.pdf", fx.marked(1))
+        result = images("a.pdf", "--pages", "last", "--dpi", "72")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(result_lines(result), ["a.pdf -> a_page-001.jpg (110x200)"])
+
+    def test_last_and_the_page_it_stands_for_make_a_bad_page_list(self) -> None:
+        self.put("a.pdf", fx.marked(3))
+        for text in ("3,last", "last,last", "Last", "LAST", "end", "1-end", "last-1"):
+            with self.subTest(pages=text):
+                result = images("a.pdf", "--pages", text)
+                self.assertUsageError(result, PAGES_USAGE)
+                self.assertUsageError(result, PAGES_COUNT)
+                self.assertRegex(flat(result.output), r"\blast\b")
         self.assertEqual(self.tree(), ["a.pdf"])
 
     def test_the_number_of_digits_grows_with_the_page_count(self) -> None:

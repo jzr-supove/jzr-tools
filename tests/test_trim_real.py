@@ -24,6 +24,7 @@ from click.testing import CliRunner
 from jzr_tools.cli import app
 
 from media_fixtures import HAVE_FFMPEG, ffmpeg_run
+from size_fixtures import with_size
 from test_media_cli import describe, err
 
 runner = CliRunner()
@@ -455,7 +456,7 @@ class RealTrimTests(unittest.TestCase):
                         "audio", source, "--start", start, "--end", start + 4, "--outdir", out_dir
                     )
                     out = out_dir / f"{source.stem}_trim{source.suffix}"
-                    self.assertIn("(audio copied)", result.stdout)
+                    self.assertIn(with_size(f"{source} -> {out} (audio copied)", out), result.stdout)
                     self.assertEqual(stream_of(out, "audio")["codec_name"], codec)
                     self.assertAlmostEqual(tone_start(out), source_tone - start, delta=0.03)
                     self.assertAlmostEqual(

@@ -81,7 +81,7 @@ Options:
   -t, --to [jpg|png]           Picture format (default jpg).
   --dpi INTEGER RANGE          Resolution, 36-600 (default 150).  [36<=x<=600]
   -q, --quality INTEGER RANGE  JPEG quality, 1-100 (default 90).  [1<=x<=100]
-  --pages PAGES                Only these pages, such as 1-3,5.
+  --pages PAGES                Only these pages, such as 1-3,5 or 2-last.
   --outdir DIRECTORY           Write the pictures here instead of beside FILE.
   --overwrite                  Replace existing output files.
   --dry-run                    Show what would be written; write nothing.
@@ -145,11 +145,11 @@ Usage: jzr pdf organize [OPTIONS] FILE
   are named in notes.
 
 Options:
-  --order PAGES           Pages in their new order, such as 3,1,2 or 12-1; pages not
-                          listed are dropped.
-  --delete PAGES          Pages to remove, such as 2,5-7.
+  --order PAGES           Pages in their new order, such as 3,1,2 or 12-1 or last-1;
+                          pages not listed are dropped.
+  --delete PAGES          Pages to remove, such as 2,5-7 or last.
   --rotate [PAGES:]ANGLE  Turn pages clockwise: 90, 180 or 270, or PAGES:ANGLE such as
-                          2-4:90. Repeatable.
+                          2-4:90 or last:90. Repeatable.
   -o, --output FILE       Write the result to this file.  [default:
                           <name>_organized.pdf]
   --overwrite             Replace existing output files.
@@ -174,7 +174,8 @@ Usage: jzr pdf split [OPTIONS] FILE
 
 Options:
   --every N           Put N pages in each file.  [x>=1]
-  --pages GROUPS      Groups of pages, such as "1-3;4,6;7-" (one file per group).
+  --pages GROUPS      Groups of pages, such as "1-3;4,6;7-" or "1;2-last" (one file per
+                      group).
   --outdir DIRECTORY  Write the files here instead of beside the source.
   --overwrite         Replace existing output files.
   --dry-run           Show what would be written; write nothing.
@@ -199,7 +200,7 @@ Usage: jzr pdf text [OPTIONS] FILE
 
 Options:
   --markdown         Convert to Markdown instead of plain text.
-  --pages PAGES      Only these pages, such as 1-3,5.
+  --pages PAGES      Only these pages, such as 1-3,5 or 2-last.
   --page-breaks      With --markdown, put --- between pages.
   -o, --output FILE  Write to this file instead of printing.
   --overwrite        Replace the output file if it exists.

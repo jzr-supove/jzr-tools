@@ -21,6 +21,7 @@ from pypdf import PdfReader
 from jzr_tools.cli import app
 from jzr_tools.core.media import format_size
 from tests import pdf_fixtures as fx
+from tests.size_fixtures import with_size
 
 runner = CliRunner()
 
@@ -141,20 +142,34 @@ class HelpTests(unittest.TestCase):
                 self.assertIn("notes", text)
 
     def test_option_help_texts(self) -> None:
+        # The examples with "last" are checked in test_the_page_options_give_a_last_example.
         split = self.help_of("pdf", "split")
         self.assertIn("--every N", split)
         self.assertIn("Put N pages in each file.", split)
-        self.assertIn('Groups of pages, such as "1-3;4,6;7-" (one file per group).', split)
+        self.assertIn('Groups of pages, such as "1-3;4,6;7-"', split)
+        self.assertIn("(one file per group)", split)
         organize = self.help_of("pdf", "organize")
+        self.assertIn("Pages in their new order, such as 3,1,2 or 12-1", organize)
+        self.assertIn("pages not listed are dropped.", organize)
+        self.assertIn("Pages to remove, such as 2,5-7", organize)
         self.assertIn(
-            "Pages in their new order, such as 3,1,2 or 12-1; pages not listed are dropped.",
-            organize,
+            "Turn pages clockwise: 90, 180 or 270, or PAGES:ANGLE such as 2-4:90", organize
         )
-        self.assertIn("Pages to remove, such as 2,5-7.", organize)
-        self.assertIn(
-            "Turn pages clockwise: 90, 180 or 270, or PAGES:ANGLE such as 2-4:90. Repeatable.",
-            organize,
-        )
+        self.assertIn("Repeatable.", organize)
+
+    def test_the_page_options_give_a_last_example(self) -> None:
+        split = self.help_of("pdf", "split").split("Options:")[1]
+        organize = self.help_of("pdf", "organize").split("Options:")[1]
+        sections = {
+            "--pages": split[split.index("--pages"):split.index("--outdir")],
+            "--order": organize[organize.index("--order"):organize.index("--delete")],
+            "--delete": organize[organize.index("--delete"):organize.index("--rotate")],
+            "--rotate": organize[organize.index("--rotate"):organize.index("--output")],
+        }
+        for option, text in sections.items():
+            with self.subTest(option=option):
+                self.assertRegex(text, r"\blast\b")
+        self.assertIn("such as 2,5-7 or last", sections["--delete"])
 
     def test_every_command_lists_its_options(self) -> None:
         wanted = {
@@ -614,9 +629,9 @@ class SplitTests(PdfCase):
         self.assertEqual(
             stdout_lines(result),
             [
-                "a.pdf -> a_split-001.pdf (page 1)",
-                "a.pdf -> a_split-002.pdf (page 2)",
-                "a.pdf -> a_split-003.pdf (page 3)",
+                with_size("a.pdf -> a_split-001.pdf (page 1)", "a_split-001.pdf"),
+                with_size("a.pdf -> a_split-002.pdf (page 2)", "a_split-002.pdf"),
+                with_size("a.pdf -> a_split-003.pdf (page 3)", "a_split-003.pdf"),
                 "pdf: 3 written",
             ],
         )
@@ -629,7 +644,10 @@ class SplitTests(PdfCase):
         self.put("a.pdf", fx.marked(1))
         result = pdf("split", "a.pdf")
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual(stdout_lines(result), ["a.pdf -> a_split.pdf (page 1)", "pdf: 1 written"])
+        self.assertEqual(
+            stdout_lines(result),
+            [with_size("a.pdf -> a_split.pdf (page 1)", "a_split.pdf"), "pdf: 1 written"],
+        )
         self.assertEqual(names(self.root), ["a.pdf", "a_split.pdf"])
 
     def test_every_n_pages(self) -> None:
@@ -639,9 +657,9 @@ class SplitTests(PdfCase):
         self.assertEqual(
             stdout_lines(result),
             [
-                "a.pdf -> a_split-001.pdf (pages 1-3)",
-                "a.pdf -> a_split-002.pdf (pages 4-6)",
-                "a.pdf -> a_split-003.pdf (page 7)",
+                with_size("a.pdf -> a_split-001.pdf (pages 1-3)", "a_split-001.pdf"),
+                with_size("a.pdf -> a_split-002.pdf (pages 4-6)", "a_split-002.pdf"),
+                with_size("a.pdf -> a_split-003.pdf (page 7)", "a_split-003.pdf"),
                 "pdf: 3 written",
             ],
         )
@@ -653,7 +671,8 @@ class SplitTests(PdfCase):
         result = pdf("split", "a.pdf", "--every", "10")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(
-            stdout_lines(result), ["a.pdf -> a_split.pdf (pages 1-3)", "pdf: 1 written"]
+            stdout_lines(result),
+            [with_size("a.pdf -> a_split.pdf (pages 1-3)", "a_split.pdf"), "pdf: 1 written"],
         )
         self.assertEqual(self.markers_of("a_split.pdf"), [1, 2, 3])
 
@@ -680,9 +699,9 @@ class SplitTests(PdfCase):
         self.assertEqual(
             stdout_lines(result),
             [
-                "a.pdf -> a_split-001.pdf (pages 1-3)",
-                "a.pdf -> a_split-002.pdf (pages 4, 6)",
-                "a.pdf -> a_split-003.pdf (pages 7-8)",
+                with_size("a.pdf -> a_split-001.pdf (pages 1-3)", "a_split-001.pdf"),
+                with_size("a.pdf -> a_split-002.pdf (pages 4, 6)", "a_split-002.pdf"),
+                with_size("a.pdf -> a_split-003.pdf (pages 7-8)", "a_split-003.pdf"),
                 "pdf: 3 written",
             ],
         )
@@ -695,20 +714,27 @@ class SplitTests(PdfCase):
         result = pdf("split", "a.pdf", "--pages", "1-3;7-")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self.markers_of("a_split-002.pdf"), [7, 8])
-        self.assertIn("(pages 7-8)", stdout_lines(result)[1])
+        self.assertEqual(
+            stdout_lines(result)[1],
+            with_size("a.pdf -> a_split-002.pdf (pages 7-8)", "a_split-002.pdf"),
+        )
 
     def test_pages_within_a_group_keep_their_source_order(self) -> None:
         self.put("a.pdf", fx.marked(7))
         result = pdf("split", "a.pdf", "--pages", "6,4")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self.markers_of("a_split.pdf"), [4, 6])
-        self.assertEqual(stdout_lines(result)[0], "a.pdf -> a_split.pdf (pages 4, 6)")
+        self.assertEqual(
+            stdout_lines(result)[0], with_size("a.pdf -> a_split.pdf (pages 4, 6)", "a_split.pdf")
+        )
 
     def test_a_single_group_with_a_single_page_names_the_page(self) -> None:
         self.put("a.pdf", fx.marked(5))
         result = pdf("split", "a.pdf", "--pages", "5")
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual(stdout_lines(result)[0], "a.pdf -> a_split.pdf (page 5)")
+        self.assertEqual(
+            stdout_lines(result)[0], with_size("a.pdf -> a_split.pdf (page 5)", "a_split.pdf")
+        )
         self.assertEqual(self.markers_of("a_split.pdf"), [5])
 
     def test_bad_group_text_is_a_usage_error_naming_the_option(self) -> None:
@@ -717,8 +743,74 @@ class SplitTests(PdfCase):
             with self.subTest(text=text):
                 result = pdf("split", "a.pdf", "--pages", text)
                 self.assertEqual(result.exit_code, 2, result.output)
-                self.assertIn(f"--pages: {USAGE_TAIL} (pages 1 to 3)", result.stderr)
+                self.assertIn(f"--pages: {USAGE_TAIL}", result.stderr)
+                self.assertIn("(pages 1 to 3)", result.stderr)
         self.assertEqual(names(self.root), ["a.pdf"])
+
+    def test_last_stands_for_the_last_page_in_a_group(self) -> None:
+        self.put("a.pdf", fx.marked(5))
+        result = pdf("split", "a.pdf", "--pages", "1-2;3-last;last")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(
+            stdout_lines(result),
+            [
+                with_size("a.pdf -> a_split-001.pdf (pages 1-2)", "a_split-001.pdf"),
+                with_size("a.pdf -> a_split-002.pdf (pages 3-5)", "a_split-002.pdf"),
+                with_size("a.pdf -> a_split-003.pdf (page 5)", "a_split-003.pdf"),
+                "pdf: 3 written",
+            ],
+        )
+        self.assertEqual(self.markers_of("a_split-002.pdf"), [3, 4, 5])
+        self.assertEqual(self.markers_of("a_split-003.pdf"), [5])
+
+    def test_the_last_page_alone_is_one_file(self) -> None:
+        self.put("a.pdf", fx.marked(7))
+        result = pdf("split", "a.pdf", "--pages", "last")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(
+            stdout_lines(result)[0], with_size("a.pdf -> a_split.pdf (page 7)", "a_split.pdf")
+        )
+        self.assertEqual(self.markers_of("a_split.pdf"), [7])
+        self.assertEqual(names(self.root), ["a.pdf", "a_split.pdf"])
+
+    def test_last_works_on_a_one_page_file(self) -> None:
+        self.put("a.pdf", fx.marked(1))
+        result = pdf("split", "a.pdf", "--pages", "last")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.markers_of("a_split.pdf"), [1])
+        self.assertEqual(stderr_lines(result), [])
+
+    def test_last_in_a_group_leaves_the_other_pages_to_the_note(self) -> None:
+        self.put("a.pdf", fx.marked(4))
+        result = pdf("split", "a.pdf", "--pages", "1;last")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(stderr_lines(result), ["note: pages not written: 2-3"])
+
+    def test_last_twice_in_a_group_is_a_usage_error(self) -> None:
+        self.put("a.pdf", fx.marked(3))
+        for text in ("3,last", "last,last", "2-last,3", "1;1-last,last"):
+            with self.subTest(text=text):
+                result = pdf("split", "a.pdf", "--pages", text)
+                self.assertEqual(result.exit_code, 2, result.output)
+                self.assertIn(f"--pages: {USAGE_TAIL}", result.stderr)
+                self.assertIn("(pages 1 to 3)", result.stderr)
+        self.assertEqual(names(self.root), ["a.pdf"])
+
+    def test_only_lowercase_last_is_a_page(self) -> None:
+        self.put("a.pdf", fx.marked(3))
+        for text in ("Last", "LAST", "end", "1-end", "1-Last", "last-1", "lastly"):
+            with self.subTest(text=text):
+                result = pdf("split", "a.pdf", "--pages", text)
+                self.assertEqual(result.exit_code, 2, result.output)
+                self.assertIn(f"--pages: {USAGE_TAIL}", result.stderr)
+                self.assertIn("last", result.stderr)
+        self.assertEqual(names(self.root), ["a.pdf"])
+
+    def test_the_usage_error_mentions_last(self) -> None:
+        self.put("a.pdf", fx.marked(3))
+        result = pdf("split", "a.pdf", "--pages", "x")
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertRegex(result.stderr, r"\blast\b")
 
     def test_outdir_receives_the_outputs(self) -> None:
         self.put("a.pdf", fx.marked(2))
@@ -842,7 +934,8 @@ class OrganizeTests(PdfCase):
         result = pdf("organize", "a.pdf", "--order", "1-3")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(
-            stdout_lines(result), ["a.pdf -> a_organized.pdf (3 pages)", "pdf: 1 organized"]
+            stdout_lines(result),
+            [with_size("a.pdf -> a_organized.pdf (3 pages)", "a_organized.pdf"), "pdf: 1 organized"],
         )
         self.assertEqual(self.markers_of("a_organized.pdf"), [1, 2, 3])
 
@@ -859,7 +952,8 @@ class OrganizeTests(PdfCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self.markers_of("a_organized.pdf"), [1, 3])
         self.assertEqual(
-            stdout_lines(result)[0], "a.pdf -> a_organized.pdf (2 pages; 3 removed)"
+            stdout_lines(result)[0],
+            with_size("a.pdf -> a_organized.pdf (2 pages; 3 removed)", "a_organized.pdf"),
         )
 
     def test_rotate_with_pages_turns_those_pages_clockwise(self) -> None:
@@ -869,7 +963,8 @@ class OrganizeTests(PdfCase):
         self.assertEqual(self.rotations_of("a_organized.pdf"), [0, 90, 90, 0])
         self.assertEqual(self.markers_of("a_organized.pdf"), [1, 2, 3, 4])
         self.assertEqual(
-            stdout_lines(result)[0], "a.pdf -> a_organized.pdf (4 pages; 2 rotated)"
+            stdout_lines(result)[0],
+            with_size("a.pdf -> a_organized.pdf (4 pages; 2 rotated)", "a_organized.pdf"),
         )
 
     def test_rotate_without_pages_turns_every_page(self) -> None:
@@ -878,7 +973,8 @@ class OrganizeTests(PdfCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self.rotations_of("a_organized.pdf"), [180, 180, 180])
         self.assertEqual(
-            stdout_lines(result)[0], "a.pdf -> a_organized.pdf (3 pages; 3 rotated)"
+            stdout_lines(result)[0],
+            with_size("a.pdf -> a_organized.pdf (3 pages; 3 rotated)", "a_organized.pdf"),
         )
 
     def test_rotation_is_added_to_the_page_own_rotation(self) -> None:
@@ -907,7 +1003,8 @@ class OrganizeTests(PdfCase):
         result = pdf("organize", "a.pdf", "--delete", "1", "--rotate", "2-3:90")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(
-            stdout_lines(result)[0], "a.pdf -> a_organized.pdf (5 pages; 2 rotated, 1 removed)"
+            stdout_lines(result)[0],
+            with_size("a.pdf -> a_organized.pdf (5 pages; 2 rotated, 1 removed)", "a_organized.pdf"),
         )
 
     def test_removing_every_page_is_a_usage_error(self) -> None:
@@ -940,7 +1037,125 @@ class OrganizeTests(PdfCase):
             with self.subTest(args=args):
                 result = pdf("organize", "a.pdf", *args)
                 self.assertEqual(result.exit_code, 2, result.output)
-                self.assertIn(f"{option}: {USAGE_TAIL} (pages 1 to 3)", result.stderr)
+                self.assertIn(f"{option}: {USAGE_TAIL}", result.stderr)
+                self.assertIn("(pages 1 to 3)", result.stderr)
+        self.assertEqual(names(self.root), ["a.pdf"])
+
+    def test_delete_last_removes_the_last_page(self) -> None:
+        self.put("a.pdf", fx.marked(4))
+        result = pdf("organize", "a.pdf", "--delete", "last")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.markers_of("a_organized.pdf"), [1, 2, 3])
+        self.assertEqual(
+            stdout_lines(result)[0],
+            with_size("a.pdf -> a_organized.pdf (3 pages; 1 removed)", "a_organized.pdf"),
+        )
+
+    def test_a_range_to_last_can_be_deleted(self) -> None:
+        self.put("a.pdf", fx.marked(6))
+        result = pdf("organize", "a.pdf", "--delete", "2,4-last")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.markers_of("a_organized.pdf"), [1, 3])
+
+    def test_last_down_to_one_reverses_the_document(self) -> None:
+        self.put("a.pdf", fx.marked(5))
+        result = pdf("organize", "a.pdf", "--order", "last-1")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.markers_of("a_organized.pdf"), [5, 4, 3, 2, 1])
+        self.assertIn("reordered", stdout_lines(result)[0])
+
+    def test_last_can_come_first_in_an_order(self) -> None:
+        self.put("a.pdf", fx.marked(4))
+        result = pdf("organize", "a.pdf", "--order", "last,1-3")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.markers_of("a_organized.pdf"), [4, 1, 2, 3])
+
+    def test_rotate_last_turns_the_last_page(self) -> None:
+        self.put("a.pdf", fx.marked(4))
+        result = pdf("organize", "a.pdf", "--rotate", "last:90")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.rotations_of("a_organized.pdf"), [0, 0, 0, 90])
+        self.assertEqual(
+            stdout_lines(result)[0],
+            with_size("a.pdf -> a_organized.pdf (4 pages; 1 rotated)", "a_organized.pdf"),
+        )
+
+    def test_rotate_accepts_last_in_a_range(self) -> None:
+        self.put("a.pdf", fx.marked(4))
+        result = pdf("organize", "a.pdf", "--rotate", "3-last:180", "--rotate", "1,last:90")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.rotations_of("a_organized.pdf"), [90, 0, 180, 270])
+
+    def test_last_in_all_three_options_means_the_same_source_page(self) -> None:
+        self.put("a.pdf", fx.marked(5))
+        result = pdf(
+            "organize", "a.pdf", "--order", "last-1", "--delete", "last", "--rotate", "last:90"
+        )
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.markers_of("a_organized.pdf"), [4, 3, 2, 1])
+        self.assertEqual(self.rotations_of("a_organized.pdf"), [0, 0, 0, 0])
+
+    def test_last_on_a_one_page_file_is_page_one(self) -> None:
+        self.put("a.pdf", fx.marked(1))
+        result = pdf("organize", "a.pdf", "--order", "last-1", "--rotate", "last:270")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.markers_of("a_organized.pdf"), [1])
+        self.assertEqual(self.rotations_of("a_organized.pdf"), [270])
+
+    def test_deleting_last_of_a_one_page_file_would_remove_every_page(self) -> None:
+        self.put("a.pdf", fx.marked(1))
+        result = pdf("organize", "a.pdf", "--delete", "last")
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("--delete would remove every page", result.stderr)
+        self.assertEqual(names(self.root), ["a.pdf"])
+
+    def test_last_listed_with_the_page_it_stands_for_is_a_usage_error(self) -> None:
+        self.put("a.pdf", fx.marked(3))
+        cases = {
+            ("--order", "3,last"): "--order",
+            ("--delete", "1-last,2"): "--delete",
+            ("--rotate", "3,last:90"): "--rotate",
+        }
+        for args, option in cases.items():
+            with self.subTest(args=args):
+                result = pdf("organize", "a.pdf", *args)
+                self.assertEqual(result.exit_code, 2, result.output)
+                self.assertIn(f"{option}: {USAGE_TAIL}", result.stderr)
+                self.assertIn("(pages 1 to 3)", result.stderr)
+        self.assertEqual(names(self.root), ["a.pdf"])
+
+    def test_other_words_are_not_pages(self) -> None:
+        self.put("a.pdf", fx.marked(3))
+        cases = {
+            ("--order", "Last"): "--order",
+            ("--order", "LAST-1"): "--order",
+            ("--delete", "LAST"): "--delete",
+            ("--delete", "end"): "--delete",
+        }
+        for args, option in cases.items():
+            with self.subTest(args=args):
+                result = pdf("organize", "a.pdf", *args)
+                self.assertEqual(result.exit_code, 2, result.output)
+                self.assertIn(f"{option}: {USAGE_TAIL}", result.stderr)
+                self.assertRegex(result.stderr, r"\blast\b")
+        self.assertEqual(names(self.root), ["a.pdf"])
+
+    def test_other_words_before_a_rotate_angle_are_not_pages(self) -> None:
+        self.put("a.pdf", fx.marked(3))
+        for item in ("Last:90", "LAST:90", "end:90"):
+            with self.subTest(item=item):
+                result = pdf("organize", "a.pdf", "--rotate", item)
+                self.assertEqual(result.exit_code, 2, result.output)
+                self.assertIn("--rotate", result.stderr)
+        self.assertEqual(names(self.root), ["a.pdf"])
+
+    def test_rotate_last_without_an_angle_still_needs_one(self) -> None:
+        self.put("a.pdf", fx.marked(3))
+        for item in ("last", "last:45", "last:"):
+            with self.subTest(item=item):
+                result = pdf("organize", "a.pdf", "--rotate", item)
+                self.assertEqual(result.exit_code, 2, result.output)
+                self.assertIn("--rotate takes 90, 180 or 270", result.stderr)
         self.assertEqual(names(self.root), ["a.pdf"])
 
     def test_output_option_names_the_result(self) -> None:
@@ -948,7 +1163,9 @@ class OrganizeTests(PdfCase):
         result = pdf("organize", "a.pdf", "--delete", "1", "-o", "less.pdf")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self.markers_of("less.pdf"), [2, 3])
-        self.assertIn("-> less.pdf (2 pages; 1 removed)", stdout_lines(result)[0])
+        self.assertEqual(
+            stdout_lines(result)[0], with_size("a.pdf -> less.pdf (2 pages; 1 removed)", "less.pdf")
+        )
         self.assertEqual(names(self.root), ["a.pdf", "less.pdf"])
 
     def test_output_without_the_pdf_extension_is_a_usage_error(self) -> None:

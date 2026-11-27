@@ -19,6 +19,8 @@ from PIL import Image
 
 from jzr_tools.cli import app
 
+from size_fixtures import with_size
+
 runner = CliRunner()
 
 SIZE_HINT = "give one size"
@@ -147,7 +149,8 @@ class SizeOptionTests(ResizeTestCase):
         result = resize("a.png", "--width", "50")
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(
-            result.stdout.splitlines()[0], "a.png -> a_50x40.png (100x80 -> 50x40)"
+            result.stdout.splitlines()[0],
+            with_size("a.png -> a_50x40.png (100x80 -> 50x40)", "a_50x40.png"),
         )
 
     def test_summary_counts_the_resized_files(self) -> None:
@@ -302,7 +305,10 @@ class EnlargeTests(ResizeTestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(
             result.stdout.splitlines()[0],
-            "small.png -> small_800x600.png (640x480 -> 800x600, enlarged; may look soft)",
+            with_size(
+                "small.png -> small_800x600.png (640x480 -> 800x600, enlarged; may look soft)",
+                "small_800x600.png",
+            ),
         )
         self.assertEqual(size_of("small_800x600.png"), (800, 600))
         self.assertEqual(result.stderr, "")
@@ -340,7 +346,8 @@ class FormatTests(ResizeTestCase):
         self.assertEqual(format_of("a_50x40.jpg"), "JPEG")
         self.assertEqual(size_of("a_50x40.jpg"), (50, 40))
         self.assertEqual(
-            result.stdout.splitlines()[0], "a.png -> a_50x40.jpg (100x80 -> 50x40)"
+            result.stdout.splitlines()[0],
+            with_size("a.png -> a_50x40.jpg (100x80 -> 50x40)", "a_50x40.jpg"),
         )
 
     def test_to_accepts_other_convert_targets(self) -> None:
@@ -370,7 +377,10 @@ class FormatTests(ResizeTestCase):
         self.assertEqual(names(self.root), ["a.png", "small.jpg"])
         self.assertEqual(format_of("small.jpg"), "JPEG")
         self.assertEqual(size_of("small.jpg"), (50, 40))
-        self.assertEqual(result.stdout.splitlines()[0], "a.png -> small.jpg (100x80 -> 50x40)")
+        self.assertEqual(
+            result.stdout.splitlines()[0],
+            with_size("a.png -> small.jpg (100x80 -> 50x40)", "small.jpg"),
+        )
 
     def test_output_in_another_folder_is_created(self) -> None:
         result = resize("a.png", "--width", "50", "-o", str(Path("deep") / "x.png"))
@@ -757,7 +767,7 @@ class OrientationAndMetadataTests(ResizeTestCase):
         self.assertEqual(size_of("side_10x20.jpg"), (10, 20))
         self.assertEqual(
             result.stdout.splitlines()[0],
-            "side.jpg -> side_10x20.jpg (20x40 -> 10x20)",
+            with_size("side.jpg -> side_10x20.jpg (20x40 -> 10x20)", "side_10x20.jpg"),
         )
 
     def test_height_and_max_side_use_the_upright_size_too(self) -> None:

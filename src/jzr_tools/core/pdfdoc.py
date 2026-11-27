@@ -37,7 +37,7 @@ MAX_DEPTH = 64
 MAX_EDGE = 14_400
 TOLERANCE = 0.001
 
-PAGES_USAGE = "use page numbers and ranges such as 1-3,5 (pages 1 to {count})"
+PAGES_USAGE = "use page numbers and ranges such as 1-3,5 or 2-last (pages 1 to {count})"
 MAX_PAGES_TEXT = 4096
 MAX_GROUPS = 100
 
@@ -464,8 +464,9 @@ def parse_pages(
 ) -> list[list[int]]:
     """Read ``1-3,5`` (or ``1-3;4,6;7-`` with ``groups``) into 1-based page lists.
 
-    ``N-`` runs to the last page; with ``backwards`` a range such as ``12-1``
-    runs down. A page may appear once in a group. Raises ValueError with the
+    ``N-`` runs to the last page, and ``last`` stands for that page's number
+    (``last``, ``3-last``, ``last-1``); with ``backwards`` a range such as
+    ``12-1`` runs down. A page may appear once in a group. Raises ValueError with the
     usage text otherwise.
     """
     usage = PAGES_USAGE.format(count=count)
@@ -478,6 +479,8 @@ def parse_pages(
         raise ValueError(usage)
 
     def number(item: str) -> int:
+        if item == "last":
+            return count
         if not re.fullmatch(r"[1-9][0-9]*", item):
             raise ValueError(usage)
         value = int(item)

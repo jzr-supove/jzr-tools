@@ -20,6 +20,7 @@ from click.testing import CliRunner
 from jzr_tools.cli import app
 
 from media_fixtures import recorded_calls
+from size_fixtures import with_size
 from test_audio_convert_cli import FLAGS, make_tool, plan_of, source_of
 from test_media_cli import NOT_FOUND, describe, err, run_without_tools
 
@@ -302,7 +303,8 @@ class ConvertTests(FakeToolsCase):
         result = self.invoke("convert", clip, "--to", "mp4")
         self.assertEqual(result.exit_code, 0, describe(result))
         lines = result.stdout.splitlines()
-        self.assertIn(f"{clip} -> {self.dir / 'clip.mp4'} (video copied, audio copied)", lines)
+        # The stand-in ffmpeg writes the nine bytes of "converted".
+        self.assertIn(f"{clip} -> {self.dir / 'clip.mp4'} (video copied, audio copied, 9 B)", lines)
         self.assertIn("ffmpeg: 1 converted", lines)
         self.assertEqual((self.dir / "clip.mp4").read_bytes(), b"converted")
         self.assertEqual(err(result), "")
@@ -312,7 +314,10 @@ class ConvertTests(FakeToolsCase):
         result = self.invoke("convert", clip, "--to", "webm")
         self.assertEqual(result.exit_code, 0, describe(result))
         self.assertIn(
-            f"{clip} -> {self.dir / 'clip.webm'} (video encoded to vp9, audio encoded to opus)",
+            with_size(
+                f"{clip} -> {self.dir / 'clip.webm'} (video encoded to vp9, audio encoded to opus)",
+                self.dir / "clip.webm",
+            ),
             result.stdout,
         )
 
@@ -361,7 +366,10 @@ class ConvertTests(FakeToolsCase):
         (clip,) = self.touch("clip.mp4")
         result = self.invoke("convert", clip, "--to", "mp3")
         self.assertEqual(result.exit_code, 0, describe(result))
-        self.assertIn(f"{clip} -> {self.dir / 'clip.mp3'} (audio encoded to mp3)", result.stdout)
+        self.assertIn(
+            with_size(f"{clip} -> {self.dir / 'clip.mp3'} (audio encoded to mp3)", self.dir / "clip.mp3"),
+            result.stdout,
+        )
         (call,) = self.ffmpeg_calls()
         self.assertIn("libmp3lame", plan_of(call))
         self.assertNotIn("0:v", " ".join(plan_of(call)))

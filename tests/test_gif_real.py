@@ -18,6 +18,7 @@ from click.testing import CliRunner
 from jzr_tools.cli import app
 
 from media_fixtures import HAVE_FFMPEG, ffmpeg_run
+from size_fixtures import with_size
 from test_media_cli import describe, err
 
 runner = CliRunner()
@@ -129,7 +130,7 @@ class RealGifTests(unittest.TestCase):
         out = self.work / "square.gif"
         self.assertEqual(video_stream(out)["codec_name"], "gif")
         self.assertEqual(size_of(out), (64, 64))
-        self.assertIn(f"{source} -> {out} (64x64, 15 fps)", result.stdout)
+        self.assertIn(with_size(f"{source} -> {out} (64x64, 15 fps)", out), result.stdout)
 
     def test_the_gif_loops_forever(self) -> None:
         source = self.stage("square.mp4")
@@ -162,14 +163,16 @@ class RealGifTests(unittest.TestCase):
     def test_a_wider_picture_is_cut_to_width_keeping_the_proportions(self) -> None:
         source = self.stage("wide.mp4")
         result = self.ok_gif(source, "--width", "100")
-        self.assertEqual(size_of(self.work / "wide.gif"), (100, 50))
-        self.assertIn("(100x50, 15 fps)", result.stdout)
+        out = self.work / "wide.gif"
+        self.assertEqual(size_of(out), (100, 50))
+        self.assertIn(with_size(f"{source} -> {out} (100x50, 15 fps)", out), result.stdout)
 
     def test_a_clip_with_a_rotation_comes_out_upright(self) -> None:
         source = self.stage("rotated.mp4")
         result = self.ok_gif(source)
-        self.assertEqual(size_of(self.work / "rotated.gif"), (64, 96))
-        self.assertIn("(64x96, 10 fps)", result.stdout)
+        out = self.work / "rotated.gif"
+        self.assertEqual(size_of(out), (64, 96))
+        self.assertIn(with_size(f"{source} -> {out} (64x96, 10 fps)", out), result.stdout)
 
     def test_a_rotated_clip_is_scaled_by_its_upright_width(self) -> None:
         source = self.stage("rotated.mp4")

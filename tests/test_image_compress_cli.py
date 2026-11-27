@@ -743,7 +743,7 @@ class NeverBiggerTests(CompressTestCase):
         line = stdout_lines(result)[0]
         self.assertRegex(
             line,
-            rf"^a\.jpg -> a_compressed\.png \({SIZE} -> {SIZE}, \+\d+%, larger than the source\)$",
+            rf"^a\.jpg -> a_compressed\.png \({SIZE} -> {SIZE}, \+\d+%, larger than the source, kept 200x200\)$",
         )
         self.assertEqual(result.stderr, "")
         self.assertEqual(stdout_lines(result)[-1], "pillow: 1 compressed")
@@ -771,7 +771,7 @@ class SizeLimitTests(CompressTestCase):
         self.assertLessEqual(out.stat().st_size, 20_000)
         self.assertEqual(size_of(out), (200, 200))
         line = stdout_lines(result)[0]
-        self.assertRegex(line, r"^a\.jpg -> a_compressed\.jpg \(.*, quality \d+\)$")
+        self.assertRegex(line, r"^a\.jpg -> a_compressed\.jpg \(.*, quality \d+, kept 200x200\)$")
         self.assertNotIn("resized", line)
 
     def test_the_quality_in_the_line_is_the_one_used(self) -> None:

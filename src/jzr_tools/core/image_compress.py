@@ -292,8 +292,11 @@ def compress_file(
     parts = [f"{format_size(source_size)} -> {format_size(size)}", change_text(source_size, size)]
     if size_limit is not None and lossy:
         parts.append(f"quality {result.quality}")
-    if (result.width, result.height) != (width, height):
+    resized = (result.width, result.height) != (width, height)
+    if resized:
         parts.append(f"resized to {result.width}x{result.height}" + (" to fit" if fitted else ""))
     if changed and size > source_size:
         parts.append("larger than the source")
+    if not resized:
+        parts.append(f"kept {result.width}x{result.height}")
     return done("compressed", ", ".join(parts))

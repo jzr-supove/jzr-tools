@@ -157,7 +157,7 @@ curl -s https://example.com/api | jzr data convert --from json --to yaml
 ```
 
 ```text
-wrote users.csv (2 rows)
+wrote users.csv (2 rows, 64 B)
 note: arrays were written as JSON text
 ```
 

@@ -235,7 +235,9 @@ class FeatureTests(TempFolderCase):
 
 class ParsePagesTests(unittest.TestCase):
     def usage(self, count: int) -> str:
-        return f"use page numbers and ranges such as 1-3,5 (pages 1 to {count})"
+        # The wording is pinned by test_the_usage_text_names_the_forms_and_the_page_count;
+        # the tests that use this only check that a bad text gets the usage text.
+        return pdfdoc.PAGES_USAGE.format(count=count)
 
     def rejected(self, text: str, count: int = 12, **options: bool) -> str:
         with self.assertRaises(ValueError) as caught:
@@ -304,6 +306,84 @@ class ParsePagesTests(unittest.TestCase):
         self.assertEqual(self.rejected(many, 200, groups=True), self.usage(200))
         ok = ";".join(str(i) for i in range(1, 101))
         self.assertEqual(len(pdfdoc.parse_pages(ok, 200, groups=True)), 100)
+
+
+    # ---- "last" stands for the number of the last page
+
+    def test_the_usage_text_names_the_forms_the_page_count_and_last(self) -> None:
+        text = self.rejected("x", 7)
+
+        self.assertIn("use page numbers and ranges such as 1-3,5", text)
+        self.assertIn("last", text)
+        self.assertIn("(pages 1 to 7)", text)
+
+    def test_last_is_the_last_page(self) -> None:
+        self.assertEqual(pdfdoc.parse_pages("last", 12), [[12]])
+        self.assertEqual(pdfdoc.parse_pages("last", 3), [[3]])
+        self.assertEqual(pdfdoc.parse_pages(" last ", 12), [[12]])
+
+    def test_last_can_end_a_range(self) -> None:
+        self.assertEqual(pdfdoc.parse_pages("3-last", 6), [[3, 4, 5, 6]])
+        self.assertEqual(pdfdoc.parse_pages("1-last", 3), [[1, 2, 3]])
+        self.assertEqual(pdfdoc.parse_pages("2-last,1", 4), [[2, 3, 4, 1]])
+
+    def test_last_can_be_listed_with_other_pages(self) -> None:
+        self.assertEqual(pdfdoc.parse_pages("1,last", 12), [[1, 12]])
+        self.assertEqual(pdfdoc.parse_pages("last,1", 12), [[12, 1]])
+        self.assertEqual(pdfdoc.parse_pages("1-3,last", 12), [[1, 2, 3, 12]])
+
+    def test_last_can_start_a_range_that_runs_down_when_that_is_allowed(self) -> None:
+        self.assertEqual(
+            pdfdoc.parse_pages("last-1", 5, backwards=True), [[5, 4, 3, 2, 1]]
+        )
+        self.assertEqual(pdfdoc.parse_pages("last-3", 5, backwards=True), [[5, 4, 3]])
+
+    def test_last_down_to_a_page_is_an_error_when_backwards_ranges_are_not_allowed(self) -> None:
+        self.assertEqual(self.rejected("last-1", 5), self.usage(5))
+        self.assertEqual(self.rejected("last-2", 5), self.usage(5))
+
+    def test_last_follows_the_page_count_it_is_given(self) -> None:
+        for count in (1, 2, 9, 100, 5000):
+            with self.subTest(count=count):
+                self.assertEqual(pdfdoc.parse_pages("last", count), [[count]])
+                self.assertEqual(pdfdoc.parse_pages("1-last", min(count, 50))[0][-1], min(count, 50))
+
+    def test_on_a_one_page_file_last_is_page_one(self) -> None:
+        self.assertEqual(pdfdoc.parse_pages("last", 1), [[1]])
+        self.assertEqual(pdfdoc.parse_pages("1-last", 1), [[1]])
+        self.assertEqual(pdfdoc.parse_pages("last-1", 1, backwards=True), [[1]])
+
+    def test_last_in_groups_is_resolved_in_its_own_group(self) -> None:
+        self.assertEqual(pdfdoc.parse_pages("1;last", 3, groups=True), [[1], [3]])
+        self.assertEqual(
+            pdfdoc.parse_pages("1-2;3-last;last", 5, groups=True), [[1, 2], [3, 4, 5], [5]]
+        )
+
+    def test_last_may_appear_once_within_a_group(self) -> None:
+        self.assertEqual(self.rejected("3,last", 3), self.usage(3))
+        self.assertEqual(self.rejected("last,3", 3), self.usage(3))
+        self.assertEqual(self.rejected("last,last", 3), self.usage(3))
+        self.assertEqual(self.rejected("2-last,last", 3), self.usage(3))
+        self.assertEqual(self.rejected("1;3,last", 3, groups=True), self.usage(3))
+        self.assertEqual(self.rejected("1,last", 1), self.usage(1))
+
+    def test_a_page_and_last_that_are_different_pages_are_both_kept(self) -> None:
+        self.assertEqual(pdfdoc.parse_pages("2,last", 3), [[2, 3]])
+
+    def test_only_lowercase_last_is_a_word_for_the_last_page(self) -> None:
+        for text in (
+            "Last", "LAST", "lAst", "end", "End", "final", "lastpage", "last page", "lastt",
+            "last1", "1last", "last-Last", "1-Last", "1-end", "1-LAST", "end-1", "Last-1",
+            "-last", "last-last-last", "last,,1", "last,", ",last", "last;1", "last.", "+last",
+            "last-0", "last-13", "13-last", "0-last", "last-1-2",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(self.rejected(text, 12, backwards=True), self.usage(12))
+
+    def test_last_is_not_an_offset_or_an_expression(self) -> None:
+        for text in ("last-1+1", "last+1", "last*2", "last/2", "(last)", "last 1", "last_1"):
+            with self.subTest(text=text):
+                self.assertEqual(self.rejected(text, 12, backwards=True), self.usage(12))
 
 
 class OutputNameTests(unittest.TestCase):
@@ -445,10 +525,54 @@ class PlanOrderTests(unittest.TestCase):
                 self.assertEqual(self.rejected(rotate=[item]), expected)
 
     def test_bad_pages_name_the_option_and_the_page_count(self) -> None:
-        tail = "use page numbers and ranges such as 1-3,5 (pages 1 to 6)"
+        tail = pdfdoc.PAGES_USAGE.format(count=6)
+        self.assertIn("use page numbers and ranges such as 1-3,5", tail)
+        self.assertIn("(pages 1 to 6)", tail)
         self.assertEqual(self.rejected(order="7"), f"--order: {tail}")
         self.assertEqual(self.rejected(delete="0"), f"--delete: {tail}")
         self.assertEqual(self.rejected(rotate=["7:90"]), f"--rotate: {tail}")
+
+
+    def test_last_in_order_is_the_last_page(self) -> None:
+        self.assertEqual(self.plan(4, order="last"), ([4], {}))
+        self.assertEqual(self.plan(4, order="last,1"), ([4, 1], {}))
+        self.assertEqual(self.plan(4, order="2-last"), ([2, 3, 4], {}))
+
+    def test_a_range_from_last_down_to_one_reverses_the_document(self) -> None:
+        self.assertEqual(self.plan(4, order="last-1"), ([4, 3, 2, 1], {}))
+        self.assertEqual(self.plan(1, order="last-1"), ([1], {}))
+
+    def test_last_in_delete_removes_the_last_page(self) -> None:
+        self.assertEqual(self.plan(5, delete="last"), ([1, 2, 3, 4], {}))
+        self.assertEqual(self.plan(5, delete="2,4-last"), ([1, 3], {}))
+
+    def test_deleting_last_of_a_one_page_file_would_remove_every_page(self) -> None:
+        self.assertEqual(self.rejected(count=1, delete="last"), "--delete would remove every page")
+
+    def test_last_in_rotate_pages(self) -> None:
+        self.assertEqual(self.plan(4, rotate=["last:90"]), ([1, 2, 3, 4], {4: 90}))
+        self.assertEqual(self.plan(5, rotate=["2-last:180"]), ([1, 2, 3, 4, 5], {2: 180, 3: 180, 4: 180, 5: 180}))
+        self.assertEqual(self.plan(3, rotate=["1,last:270"]), ([1, 2, 3], {1: 270, 3: 270}))
+        self.assertEqual(self.plan(1, rotate=["last:90"]), ([1], {1: 90}))
+
+    def test_a_rotate_item_with_last_still_needs_an_angle(self) -> None:
+        expected = "--rotate takes 90, 180 or 270, optionally after PAGES: (such as 2-4:90)"
+        for item in ("last:45", "last:", "last:last", ":90", "last"):
+            with self.subTest(item=item):
+                self.assertEqual(self.rejected(rotate=[item]), expected)
+
+    def test_last_in_a_page_option_is_checked_like_a_number(self) -> None:
+        tail = pdfdoc.PAGES_USAGE.format(count=3)
+        self.assertEqual(self.rejected(count=3, order="3,last"), f"--order: {tail}")
+        self.assertEqual(self.rejected(count=3, delete="1,1-last"), f"--delete: {tail}")
+        self.assertEqual(self.rejected(count=3, delete="Last"), f"--delete: {tail}")
+        self.assertEqual(self.rejected(count=3, rotate=["3,last:90"]), f"--rotate: {tail}")
+
+    def test_another_word_before_the_angle_is_an_error(self) -> None:
+        # Which text the error shows is not pinned: it is the page text or the rotate text.
+        for item in ("Last:90", "LAST:90", "end:90", "lastly:90", "last-Last:90"):
+            with self.subTest(item=item):
+                self.assertIn("--rotate", self.rejected(rotate=[item]))
 
 
 def pdfdoc_plan(count, *, order, delete, rotate):  # noqa: ANN001, ANN201

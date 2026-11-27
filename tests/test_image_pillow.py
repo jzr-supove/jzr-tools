@@ -24,6 +24,7 @@ from PIL import Image, ImageCms
 from jzr_tools.cli import app
 from jzr_tools.core import images
 from jzr_tools.core.images import SUPPORTED_EXTENSIONS, convert_file, detect_backends
+from size_fixtures import with_size
 from tests.test_images import ONE_PIXEL_PNG, three_frame_gif
 from tests.test_startup import Observed
 
@@ -1122,12 +1123,12 @@ class DryRunTests(TempDirTestCase):
         )
         self.assertEqual(listing(self.root), ["a.png", "b.png"])
 
-    def test_dry_run_line_is_the_line_a_real_conversion_prints(self) -> None:
+    def test_dry_run_line_is_the_line_a_real_conversion_prints_without_the_size(self) -> None:
         a = self.root / "a.png"
         gradient().save(a)
         planned = image_cli("png2jpg", str(a), "--dry-run").stdout.splitlines()[0]
         real = image_cli("png2jpg", str(a)).stdout.splitlines()[0]
-        self.assertEqual(planned, real)
+        self.assertEqual(real, with_size(planned, self.root / "a.jpg"))
 
     def test_dry_run_reports_skips_as_usual_and_writes_nothing(self) -> None:
         gradient().save(self.root / "a.png")

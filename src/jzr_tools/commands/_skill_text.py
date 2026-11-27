@@ -20,7 +20,8 @@ from jzr_tools.commands._tree import LEFT_OUT, TOP_LEVEL, Entry, context, entrie
 from jzr_tools.core.skill import source_dir
 
 __all__ = [
-    "LEFT_OUT", "TOP_LEVEL", "Entry", "build", "command_map", "entries", "help_text", "reference", "write",
+    "LEFT_OUT", "SHARED_OPTIONS", "TOP_LEVEL", "Entry", "build", "command_map", "entries", "help_text",
+    "own_options", "reference", "write",
 ]
 
 HELP_WIDTH = 88
@@ -36,13 +37,62 @@ def _by_group() -> dict[str, list[Entry]]:
     return groups
 
 
+# Explained once in the Rules of SKILL.md for every batch command, so the list leaves them out.
+SHARED_OPTIONS = frozenset(
+    {"--dir", "--pattern", "--recursive", "--output", "--outdir", "--overwrite", "--dry-run", "--help"}
+)
+# Click's words for numbers, written as N in the list.
+_NUMERIC = frozenset({"INTEGER", "INTEGER RANGE", "FLOAT", "FLOAT RANGE"})
+
+
+def _command_context(entry: Entry) -> tuple[click.Command, click.Context]:
+    """The command and the context Click makes for it when it is run as ``jzr <path>``."""
+    ctx = context(root, "jzr", None)
+    command: click.Command = root
+    for name in entry.names:
+        assert isinstance(command, click.Group)
+        command = command.get_command(ctx, name) or entry.command
+        ctx = context(command, name, ctx)
+    return command, ctx
+
+
+def own_options(entry: Entry) -> list[str]:
+    """The arguments, then the options as `-h` lists them, without the shared ones.
+
+    An agent can then run the command without asking for its help first, which
+    costs it a whole turn.
+    """
+    command, ctx = _command_context(entry)
+    arguments: list[str] = []
+    options: list[str] = []
+    for param in command.get_params(ctx):
+        if isinstance(param, click.Argument):
+            arguments.append(param.make_metavar(ctx))
+            continue
+        record = param.get_help_record(ctx)
+        if not isinstance(param, click.Option) or param.hidden or record is None:
+            continue
+        longest = max((n for n in (*param.opts, *param.secondary_opts) if n.startswith("--")), key=len)
+        if longest in SHARED_OPTIONS:
+            continue
+        # The record reads "-s, --size SIZE": the metavar follows the last name.
+        metavar = record[0].split(", ")[-1].partition(" ")[2]
+        metavar = "N" if metavar in _NUMERIC else metavar
+        options.append(f"{longest} {metavar}" if metavar else longest)
+    return [*arguments, *options]
+
+
 def command_map() -> str:
     """The list of commands in SKILL.md, under one heading for each reference file."""
     blocks = []
     for group, commands in _by_group().items():
         lines = [f"### {group} ([reference/{group}.md](reference/{group}.md))"]
         for entry in commands:
-            lines.append(f"- `jzr {entry.path}` - {entry.command.get_short_help_str(limit=300)}")
+            line = f"- `jzr {entry.path}` - {entry.command.get_short_help_str(limit=300)}"
+            items = own_options(entry)
+            if items:
+                line += " " + " ".join(f"`{item}`" for item in items)
+            lines.append(line)
         blocks.append("\n".join(lines))
     return "\n".join(blocks) + "\n"
 

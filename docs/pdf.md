@@ -35,7 +35,8 @@ report.pdf
   an existing file is only replaced with `--overwrite`. `--dry-run` shows what
   would be written.
 - Page lists are numbers and ranges such as `1-3,5`. `7-` runs to the last
-  page; in `--order`, `12-1` runs backwards. `--pages` takes groups split by
+  page, and `last` is the last page's number (`--delete last`, `2-last`); in
+  `--order`, `12-1` or `last-1` runs backwards. `--pages` takes groups split by
   `;`, one file each, and names the pages that were left out.
 - `organize` applies `--order` first, then `--delete` (by the page numbers
   of the source), then each `--rotate`, which turns pages clockwise by 90, 180
